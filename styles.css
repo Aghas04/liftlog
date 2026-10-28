@@ -26,6 +26,7 @@ body {
   overscroll-behavior-y: none;
 }
 button, input, select { font: inherit; color: inherit; }
+button { touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 button { cursor: pointer; border: 0; background: none; padding: 0; }
 h1, h2, h3 { margin: 0; line-height: 1.2; }
 
@@ -67,8 +68,8 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 /* Week summary */
 .week-card {
   border-radius: 18px; padding: 16px; margin-bottom: 4px;
-  background: linear-gradient(140deg, rgba(196, 245, 66, 0.14), rgba(62, 212, 255, 0.06) 55%, var(--surface) 100%);
-  border: 1px solid rgba(196, 245, 66, 0.18);
+  background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 15%, transparent), rgba(62, 212, 255, 0.05) 55%, var(--surface) 100%);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .week-stats { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 14px; }
 .week-stats b { display: block; font-size: 26px; font-weight: 900; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
@@ -76,7 +77,7 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 .week-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
 .wd { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: var(--muted); }
 .wd i { width: 100%; max-width: 34px; height: 8px; border-radius: 99px; background: rgba(255, 255, 255, 0.08); }
-.wd.on i { background: var(--accent); box-shadow: 0 0 12px rgba(196, 245, 66, 0.6); }
+.wd.on i { background: var(--accent); box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 60%, transparent); }
 .wd.today span { color: var(--text); }
 .wd.today i { outline: 1.5px solid rgba(255, 255, 255, 0.35); outline-offset: 2px; }
 
@@ -210,7 +211,7 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 #tabs button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; font-weight: 600; color: var(--muted); }
 #tabs button svg { width: 24px; height: 24px; padding: 3px 14px; box-sizing: content-box; border-radius: 99px; transition: background 0.2s; }
 #tabs button.on { color: var(--accent); }
-#tabs button.on svg { background: rgba(196, 245, 66, 0.14); }
+#tabs button.on svg { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 
 /* Bottom sheet */
 #sheet .overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 30; animation: fade 0.15s; }
@@ -276,3 +277,102 @@ select.ex-select { width: 100%; height: 46px; border-radius: 12px; border: 1px s
 .cal i.today { outline: 1px solid var(--muted); }
 
 .toast { position: fixed; top: calc(var(--safe-t) + 12px); left: 50%; transform: translateX(-50%); z-index: 50; background: var(--text); color: var(--bg); font-weight: 700; padding: 10px 16px; border-radius: 99px; font-size: 14px; animation: up 0.2s; }
+
+/* ---------- Motion ---------- */
+#view.enter > *, #view.enter .active > *, #view.enter .days > * {
+  animation: rise 0.42s cubic-bezier(.2, .8, .2, 1) both;
+  animation-delay: calc(var(--i, 0) * 35ms);
+}
+#view.enter .active > .workout-head { animation: none; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+.stepper button:active { transform: scale(0.86); }
+.stepper button { transition: transform 0.08s; }
+.stepper input.bump { animation: bump 0.18s ease-out; }
+@keyframes bump { 50% { transform: scale(1.14); } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---------- Equipment icons ---------- */
+.tag { display: inline-flex; align-items: center; gap: 5px; }
+.tag svg { width: 14px; height: 14px; }
+.pick-eq { display: inline-flex; align-items: center; gap: 5px; }
+.pick-eq svg { width: 14px; height: 14px; opacity: 0.8; }
+
+/* ---------- PR sets ---------- */
+.set-row.pr .check { background: linear-gradient(135deg, #ffe27a, #ffb938) !important; color: #3a2700 !important; box-shadow: 0 0 18px -2px #ffc94b !important; }
+.set-row.pr .set-num { color: #ffc94b !important; }
+.set-row.pr .goal { color: #ffc94b; font-weight: 700; }
+.set-row.pr.just-done { animation: prflash 0.9s ease-out; }
+@keyframes prflash { 0% { background: rgba(255, 201, 75, 0.35); } 100% { background: transparent; } }
+.pr-toast {
+  position: fixed; top: calc(var(--safe-t) + 14px); left: 50%; z-index: 60; transform: translateX(-50%);
+  display: flex; gap: 12px; align-items: center; min-width: 260px; max-width: calc(100vw - 32px);
+  padding: 12px 18px 12px 14px; border-radius: 18px; color: #3a2700;
+  background: linear-gradient(135deg, #ffe58a, #ffb938); box-shadow: 0 12px 40px -6px rgba(255, 185, 56, 0.7);
+  animation: prin 0.5s cubic-bezier(.2, 1.5, .4, 1);
+}
+.pr-toast.out { transition: opacity 0.35s, transform 0.35s; opacity: 0; transform: translate(-50%, -20px); }
+.pr-toast b { display: block; font-size: 17px; font-weight: 900; }
+.pr-toast small { font-size: 13px; font-weight: 600; }
+.pr-trophy { font-size: 30px; animation: spin 0.7s ease-out; }
+@keyframes prin { from { transform: translate(-50%, -40px) scale(0.8); opacity: 0; } }
+@keyframes spin { from { transform: rotate(-30deg) scale(0.4); } }
+
+/* ---------- Celebration ---------- */
+.celebrate {
+  position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 24px 16px calc(var(--safe-b) + 24px);
+  background: radial-gradient(90% 60% at 50% 30%, color-mix(in srgb, var(--c) 30%, #0d0f12) 0%, rgba(13, 15, 18, 0.97) 70%);
+  animation: fade 0.3s;
+}
+.cel-inner { width: 100%; max-width: 420px; text-align: center; }
+.cel-ico {
+  width: 96px; height: 96px; margin: 0 auto 16px; border-radius: 30px; display: grid; place-items: center; font-size: 50px;
+  background: color-mix(in srgb, var(--c) 25%, #0d0f12); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 50%, transparent), 0 0 60px -10px var(--c);
+  animation: pop 0.6s cubic-bezier(.2, 1.6, .4, 1);
+}
+.celebrate .eyebrow { color: var(--c); text-transform: uppercase; letter-spacing: 0.12em; font-size: 12px; }
+.celebrate h1 { font-size: 34px; font-weight: 900; letter-spacing: -0.03em; margin: 4px 0 22px; }
+.cel-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+.cel-stats div { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 14px 6px; }
+.cel-stats b { display: block; font-size: 26px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.cel-stats span { font-size: 12px; color: var(--muted); }
+.cel-prs { display: grid; gap: 8px; margin-bottom: 14px; text-align: left; }
+.cel-pr { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 14px; background: rgba(255, 201, 75, 0.1); border: 1px solid rgba(255, 201, 75, 0.35); }
+.cel-pr > span { font-size: 26px; }
+.cel-pr b { display: block; }
+.cel-pr small { color: #ffd77a; font-size: 13px; }
+.cel-streak { font-weight: 800; margin-bottom: 18px; color: var(--warn); }
+.celebrate .btn.primary { background: var(--c); }
+.confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 80; pointer-events: none; }
+
+/* ---------- Plate calculator ---------- */
+.plates-weight { display: flex; align-items: center; justify-content: center; gap: 22px; margin: 6px 0 4px; }
+.plates-weight button { width: 52px; height: 52px; border-radius: 50%; background: var(--surface-2); font-size: 26px; font-weight: 700; }
+.plates-weight b { display: block; font-size: 40px; font-weight: 900; text-align: center; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.plates-weight span { display: block; text-align: center; font-size: 12px; color: var(--muted); }
+.plates-view { background: var(--surface-2); border-radius: 14px; padding: 8px; margin: 12px 0 8px; }
+.plates-svg { display: block; width: 100%; height: auto; }
+.plates-list { text-align: center; margin: 0 0 16px; }
+
+/* ---------- Accent swatches ---------- */
+.swatches { display: flex; gap: 12px; }
+.swatches button { width: 42px; height: 42px; border-radius: 50%; background: var(--sw); box-shadow: 0 0 0 3px var(--surface); }
+.swatches button.on { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--sw), 0 0 18px -2px var(--sw); }
+
+/* ---------- Muscle map ---------- */
+.mm-card { padding: 14px 10px; }
+.muscle-map { display: block; width: 100%; height: auto; max-height: 280px; }
+.muscle-map .mm { transition: fill-opacity 0.4s; }
+.mm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; justify-content: center; }
+.pill.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); }
+.pill.on b { color: var(--accent); }
+
+/* ---------- Charts ---------- */
+.chart .pt { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; transition: r 0.15s; }
+.chart .pt.pr { fill: #ffc94b; }
+.chart .pt.sel { stroke: var(--text); stroke-width: 2.5; }
+.chart .trend { stroke: var(--text); stroke-opacity: 0.35; stroke-width: 1.5; stroke-dasharray: 4 4; }
+.chart .trend-lbl { fill: var(--muted); }
+.chart-info { font-size: 13px; color: var(--muted); padding: 8px 6px 4px; min-height: 44px; }
+.chart-info.on { color: var(--text); }

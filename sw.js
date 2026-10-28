@@ -1,6 +1,6 @@
 // Offline support: serve the app shell from cache, refresh it in the background.
 // Bump VERSION when shipping changes so phones pick up the new files.
-const VERSION = 'liftlog-v2';
+const VERSION = 'liftlog-v3';
 const FILES = [
   './',
   'index.html',
@@ -11,6 +11,9 @@ const FILES = [
   'js/store.js',
   'js/engine.js',
   'js/charts.js',
+  'js/fx.js',
+  'js/plates.js',
+  'js/bodymap.js',
   'icons/icon-180.png',
   'icons/icon-192.png',
   'icons/icon-512.png',

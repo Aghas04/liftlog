@@ -2,8 +2,19 @@ import { DAY_TYPES, MUSCLES, EQUIPMENT, dayType } from './data.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts,
 } from './store.js';
-import { suggest, targetFor, workingSets, sessionE1RM } from './engine.js';
+import { suggest, targetFor, workingSets, sessionE1RM, epley } from './engine.js';
 import { lineChart } from './charts.js';
+import { countUp, confetti } from './fx.js';
+import { platesFor, platesSvg } from './plates.js';
+import { muscleMap } from './bodymap.js';
+
+const ACCENTS = { lime: '#c4f542', cyan: '#3ed4ff', purple: '#9b8cff', orange: '#ff9447', red: '#ff5f6d' };
+
+function applyTheme() {
+  const hex = ACCENTS[state.settings.accent] || ACCENTS.lime;
+  document.documentElement.style.setProperty('--accent', hex);
+  document.documentElement.style.setProperty('--hit', hex);
+}
 
 const $ = sel => document.querySelector(sel);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -29,6 +40,15 @@ const ICON = {
   arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
 };
 
+// Small equipment glyphs shown next to exercise names.
+const EQUIP_ICON = {
+  barbell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M2 12h20M5 8v8M8 6v12M16 6v12M19 8v8"/></svg>',
+  dumbbell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M8 12h8M5 8v8M8 7v10M16 7v10M19 8v8"/></svg>',
+  cable: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="5" r="2.5"/><path d="M12 7.5V17M8 19h8M12 17v2"/></svg>',
+  machine: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M6 9h12M6 13h12M6 17h12"/></svg>',
+  bodyweight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4.5" r="2"/><path d="M5 9l7 1 7-1M12 10v5l-3 6M12 15l3 6"/></svg>',
+};
+
 // ---------- Helpers ----------
 function relDays(iso) {
   const d = Math.floor((startOfDay(Date.now()) - startOfDay(new Date(iso).getTime())) / DAY);
@@ -47,6 +67,16 @@ function toast(msg) {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 2200);
+}
+
+function prToast(detail) {
+  document.querySelector('.pr-toast')?.remove();
+  const el = document.createElement('div');
+  el.className = 'pr-toast';
+  el.innerHTML = `<span class="pr-trophy">🏆</span><div><b>New PR!</b><small>${esc(detail)}</small></div>`;
+  document.body.appendChild(el);
+  setTimeout(() => el.classList.add('out'), 2600);
+  setTimeout(() => el.remove(), 3000);
 }
 
 function getW(ctx) {
@@ -98,7 +128,7 @@ function startWorkout(dayId, repeatFrom) {
   save();
   requestWakeLock();
   closeSheet();
-  render();
+  render(true);
   window.scrollTo(0, 0);
 }
 
@@ -123,8 +153,9 @@ function addExercise(exId, doRender = true) {
 
 function finishWorkout() {
   const w = state.activeWorkout;
+  const prs = workoutPRs(w);
   const exercises = w.exercises
-    .map(e => ({ exId: e.exId, difficulty: e.difficulty, sets: e.sets.filter(s => s.done && s.reps > 0).map(({ weight, reps, target, warmup }) => ({ weight: weight || 0, reps, target, warmup: !!warmup, done: true })) }))
+    .map(e => ({ exId: e.exId, difficulty: e.difficulty, sets: e.sets.filter(s => s.done && s.reps > 0).map(({ weight, reps, target, warmup, pr }) => ({ weight: weight || 0, reps, target, warmup: !!warmup, done: true, ...(pr ? { pr: true } : {}) })) }))
     .filter(e => e.sets.length);
   const saved = { id: w.id, dayType: w.dayType, date: w.startedAt, finishedAt: new Date().toISOString(), exercises };
   state.workouts.push(saved);
@@ -134,9 +165,37 @@ function finishWorkout() {
   stopTimer();
   releaseWakeLock();
   closeSheet();
-  toast('Workout saved 💪');
-  render();
+  render(true);
   window.scrollTo(0, 0);
+  celebrate(saved, prs);
+}
+
+// Full-screen "workout complete" moment.
+function celebrate(w, prs) {
+  const dt = dayType(w.dayType);
+  const sets = w.exercises.reduce((n, e) => n + workingSets(e).length, 0);
+  const mins = Math.max(1, Math.round((new Date(w.finishedAt) - new Date(w.date)) / 60000));
+  const { streak } = weekStats();
+  const el = document.createElement('div');
+  el.className = 'celebrate';
+  el.style.setProperty('--c', dt.color);
+  el.innerHTML = `
+    <div class="cel-inner">
+      <div class="cel-ico">${dt.icon}</div>
+      <div class="eyebrow">Workout complete</div>
+      <h1>${esc(dt.name)} crushed.</h1>
+      <div class="cel-stats">
+        <div><b data-count="${mins}">0</b><span>minutes</span></div>
+        <div><b data-count="${sets}">0</b><span>sets</span></div>
+        <div><b data-count="${Math.round(workoutVolume(w))}">0</b><span>lb moved</span></div>
+      </div>
+      ${prs.length ? `<div class="cel-prs">${prs.map(p => `<div class="cel-pr"><span>🏆</span><div><b>${esc(p.name)}</b><small>New best · ${Math.round(p.now)} lb est. 1RM (+${Math.round(p.now - p.prev)})</small></div></div>`).join('')}</div>` : ''}
+      ${streak ? `<div class="cel-streak">🔥 ${streak}-week streak — keep it going</div>` : ''}
+      <button class="btn primary" data-act="closeCelebrate">Done</button>
+    </div>`;
+  document.body.appendChild(el);
+  countUp(el);
+  confetti([dt.color, ACCENTS[state.settings.accent] || ACCENTS.lime, '#ffffff', '#ffd34d']);
 }
 
 function workoutPRs(w, excludeId) {
@@ -259,7 +318,7 @@ function setRow(ctx, ei, si, e, ex, s, live) {
   const miss = s.done && s.target && s.reps != null && s.reps < s.target.reps;
   const bw = isBW(ex);
   return `
-  <div class="set-row ${s.done ? 'done' : ''} ${miss ? 'miss' : ''}" data-w="${ctx}" data-e="${ei}" data-s="${si}">
+  <div class="set-row ${s.done ? 'done' : ''} ${miss ? 'miss' : ''} ${s.done && s.pr ? 'pr' : ''}" data-w="${ctx}" data-e="${ei}" data-s="${si}">
     <button class="set-num ${s.warmup ? 'warm' : ''}" data-act="warmup" aria-label="Toggle warm-up">${s.warmup ? 'W' : si + 1 - e.sets.slice(0, si).filter(x => x.warmup).length}</button>
     <div class="stepper">
       <button data-act="step" data-f="weight" data-d="-1" aria-label="Less weight">−</button>
@@ -272,8 +331,28 @@ function setRow(ctx, ei, si, e, ex, s, live) {
       <button data-act="step" data-f="reps" data-d="1" aria-label="More reps">+</button>
     </div>
     <button class="check" data-act="done" aria-label="Mark set done">${ICON.check}</button>
-    ${s.target ? `<div class="goal">${miss ? `missed · goal ${s.target.reps}` : `goal ${s.target.reps}`}</div>` : ''}
+    ${s.target || (s.done && s.pr) ? `<div class="goal">${goalText(s)}</div>` : ''}
   </div>`;
+}
+
+function goalText(s) {
+  const miss = s.done && s.target && s.reps != null && s.reps < s.target.reps;
+  const parts = [];
+  if (s.done && s.pr) parts.push('🏆 New PR');
+  if (s.target) parts.push(miss ? `missed · goal ${s.target.reps}` : `goal ${s.target.reps}`);
+  return parts.join(' · ');
+}
+
+// Best estimated 1RM for an exercise before this set: past sessions plus
+// other finished sets in the current workout.
+function bestBefore(c) {
+  const hist = historyFor(c.e.exId, { excludeId: c.w.id });
+  if (!hist.length) return null;
+  let best = Math.max(...hist.map(h => sessionE1RM(h, c.ex, bodyweightOn(h.date))));
+  c.e.sets.forEach(s => {
+    if (s !== c.s && s.done && !s.warmup && s.reps > 0) best = Math.max(best, epley(loadOf(c.ex, s.weight), s.reps));
+  });
+  return best;
 }
 
 function exCard(w, ctx, ei, live) {
@@ -298,8 +377,9 @@ function exCard(w, ctx, ei, live) {
   return `
   <section class="ex-card ${cardComplete(e) ? 'complete' : ''}" data-w="${ctx}" data-e="${ei}" style="--c:${dayType(w.dayType)?.color}">
     <div class="ex-head">
-      <div><span class="tag">${MUSCLES[ex.muscle] || ''}</span><h3>${esc(ex.name)}</h3></div>
+      <div><span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[ex.muscle] || ''}</span><h3>${esc(ex.name)}</h3></div>
       <div class="ex-tools">
+        ${live && ex.equipment === 'barbell' ? `<button data-act="platesSheet" aria-label="Plate calculator">Plates</button>` : ''}
         ${live ? `<button data-act="restSheet">⏱ ${restFor(e.exId)}s</button>` : ''}
         <button data-act="removeEx" aria-label="Remove exercise">✕</button>
       </div>
@@ -399,9 +479,9 @@ function viewWorkout() {
   </div>
   <div class="week-card">
     <div class="week-stats">
-      <div><b>${thisWeek}</b><span>this week</span></div>
-      <div><b>${streak ? '🔥 ' + streak : '0'}</b><span>week streak</span></div>
-      <div><b>${state.workouts.length}</b><span>total</span></div>
+      <div><b data-count="${thisWeek}">${thisWeek}</b><span>this week</span></div>
+      <div><b data-count="${streak}" data-prefix="${streak ? '🔥 ' : ''}">${streak ? '🔥 ' + streak : '0'}</b><span>week streak</span></div>
+      <div><b data-count="${state.workouts.length}">${state.workouts.length}</b><span>total</span></div>
     </div>
     <div class="week-days">${week}</div>
   </div>
@@ -495,7 +575,21 @@ function viewProgress() {
     top: h => Math.max(...workingSets(h).map(s => loadOf(ex, s.weight, h.date))),
     volume: h => sessionVolume(ex, workingSets(h), h.date),
   }[ui.progressMetric];
-  const points = hist.map(h => ({ x: new Date(h.date).getTime(), y: metricFn(h) })).filter(p => p.y > 0);
+  const points = hist.map(h => ({ x: new Date(h.date).getTime(), y: metricFn(h), info: setsSummary(ex, h.sets) })).filter(p => p.y > 0);
+  ui.chartPoints = points;
+
+  // Working sets per muscle over the last 7 days.
+  const weekAgo = new Date(Date.now() - 7 * DAY).toISOString();
+  const muscleSets = {};
+  for (const w of state.workouts) {
+    if (w.date < weekAgo) continue;
+    for (const e of w.exercises) {
+      const m = exercise(e.exId).muscle;
+      muscleSets[m] = (muscleSets[m] || 0) + workingSets(e).length;
+    }
+  }
+  const trained = Object.entries(MUSCLES).map(([k, name]) => ({ k, name, n: muscleSets[k] || 0 })).sort((a, b) => b.n - a.n);
+  const behind = trained.filter(m => m.n < 4).map(m => m.name);
   const lastY = points.at(-1)?.y ?? 0;
   const firstY = points[0]?.y ?? 0;
   const delta = firstY ? ((lastY - firstY) / firstY) * 100 : 0;
@@ -514,11 +608,18 @@ function viewProgress() {
   return `
   <div class="top"><h1>Progress</h1></div>
   <div class="stats">
-    <div class="stat"><b>${thisWeek}</b><span>this week</span></div>
-    <div class="stat"><b>${streak}</b><span>week streak</span></div>
-    <div class="stat"><b>${state.workouts.length}</b><span>workouts</span></div>
+    <div class="stat"><b data-count="${thisWeek}">${thisWeek}</b><span>this week</span></div>
+    <div class="stat"><b data-count="${streak}">${streak}</b><span>week streak</span></div>
+    <div class="stat"><b data-count="${state.workouts.length}">${state.workouts.length}</b><span>workouts</span></div>
   </div>
   <div class="card"><div class="cal">${cal}</div></div>
+
+  <div class="section-title">Muscles · last 7 days</div>
+  <div class="card mm-card">
+    ${muscleMap(muscleSets)}
+    <div class="mm-list">${trained.filter(m => m.n).map(m => `<span class="pill on">${m.name} <b>${m.n}</b></span>`).join('')}</div>
+    ${behind.length ? `<p class="muted small" style="margin:10px 0 0">Under 4 sets: ${behind.join(', ')}</p>` : ''}
+  </div>
 
   <div class="section-title">Lift progress</div>
   <select class="ex-select" data-field="progressEx">
@@ -530,7 +631,8 @@ function viewProgress() {
   <div class="chart-wrap">
     <div class="chart-head"><div><div class="muted small">${metricName}</div><b>${Math.round(lastY).toLocaleString()} lb</b></div>
       ${points.length > 1 ? `<span class="delta ${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(1)}% since first</span>` : ''}</div>
-    ${points.length > 1 ? lineChart(points) : `<div class="empty" style="padding:24px">Log this lift again to see a trend.</div>`}
+    ${points.length > 1 ? lineChart(points, { prs: ui.progressMetric !== 'volume', trend: true }) : `<div class="empty" style="padding:24px">Log this lift again to see a trend.</div>`}
+    ${points.length > 1 ? `<div class="chart-info" id="chartInfo">Tap a point to see that session. ★ = new best${points.length >= 3 ? ' · dotted line = trend' : ''}</div>` : ''}
   </div>
 
   <div class="section-title">Personal records</div>
@@ -573,9 +675,19 @@ function renderTabs() {
   $('#tabs').innerHTML = tabs.map(([id, l]) => `<button data-act="tab" data-tab="${id}" class="${ui.tab === id ? 'on' : ''}">${ICON[id]}${l}</button>`).join('');
 }
 
-function render() {
+// animate: play the entrance animation (tab switches, starting/finishing).
+function render(animate = false) {
   const views = { workout: viewWorkout, history: viewHistory, progress: viewProgress, health: viewHealth };
-  $('#view').innerHTML = views[ui.tab]();
+  const view = $('#view');
+  view.innerHTML = views[ui.tab]();
+  if (animate) {
+    const items = view.querySelectorAll(':scope > *, .active > *, .days > *');
+    items.forEach((n, i) => n.style.setProperty('--i', Math.min(i, 12)));
+    view.classList.remove('enter');
+    void view.offsetWidth;
+    view.classList.add('enter');
+    countUp(view);
+  }
   renderTabs();
   renderSheet();
   tick();
@@ -593,7 +705,7 @@ function pickerList(query) {
   const q = query.trim().toLowerCase();
   const sortFn = (a, b) => (counts[b.id] || 0) - (counts[a.id] || 0) || a.name.localeCompare(b.name);
   const item = ex => `<button class="pick ${added.has(ex.id) ? 'added' : ''}" data-act="pick" data-id="${ex.id}">
-    <span>${esc(ex.name)}</span><span class="muted">${added.has(ex.id) ? 'added' : esc(EQUIPMENT[ex.equipment]?.name || '')}</span></button>`;
+    <span>${esc(ex.name)}</span><span class="muted pick-eq">${added.has(ex.id) ? 'added' : `${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}`}</span></button>`;
   if (q) {
     const hits = allExercises().filter(e => e.name.toLowerCase().includes(q)).sort(sortFn);
     return (hits.map(item).join('') || `<div class="empty">No match. Create it as a custom exercise.</div>`);
@@ -656,8 +768,26 @@ function sheetHtml() {
           <button class="btn danger" data-act="discard">Discard workout</button>
         </div>`;
     }
+    case 'plates': {
+      const { plates, leftover } = platesFor(s.weight, s.bar);
+      const under = s.weight < s.bar;
+      return `<h2>Plate calculator</h2><p class="muted">${esc(exercise(s.exId).name)}</p>
+        <div class="plates-weight">
+          <button data-act="platesStep" data-d="-5" aria-label="Less weight">−</button>
+          <div><b>${fmtW(s.weight)}</b><span>lb total</span></div>
+          <button data-act="platesStep" data-d="5" aria-label="More weight">+</button>
+        </div>
+        <div class="plates-view">${platesSvg(plates)}</div>
+        <p class="plates-list">${under ? `Less than the ${s.bar} lb bar.` : plates.length ? `Each side: <b>${plates.join(' + ')}</b>` : 'Empty bar'}${leftover ? ` <span class="muted">(${leftover} lb can't be loaded)</span>` : ''}</p>
+        <div class="field"><span>Bar</span>
+          <div class="chips">${[[45, 'Olympic 45'], [35, 'Women\'s 35'], [25, 'EZ / 25'], [15, 'Training 15']].map(([v, l]) => `<button data-act="platesBar" data-v="${v}" class="${s.bar === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+        </div>`;
+    }
     case 'settings':
       return `<h2>Settings</h2>
+        <div class="field"><span>Accent color</span>
+          <div class="swatches">${Object.entries(ACCENTS).map(([k, hex]) => `<button data-act="accent" data-v="${k}" class="${(state.settings.accent || 'lime') === k ? 'on' : ''}" style="--sw:${hex}" aria-label="${k}"></button>`).join('')}</div>
+        </div>
         <div class="field"><span>Default rest timer</span>
           <div class="chips">${[60, 90, 120, 180].map(v => `<button data-act="defaultRest" data-v="${v}" class="${state.settings.defaultRest === v ? 'on' : ''}">${v}s</button>`).join('')}</div>
         </div>
@@ -676,7 +806,14 @@ function sheetHtml() {
 
 function renderSheet() {
   const root = $('#sheet');
-  if (!ui.sheet) { root.innerHTML = ''; document.body.style.overflow = ''; return; }
+  if (!ui.sheet) { root.innerHTML = ''; delete root.dataset.type; document.body.style.overflow = ''; return; }
+  // Same sheet already open: update its contents without replaying the slide-in.
+  const panel = root.querySelector('.panel');
+  if (panel && root.dataset.type === ui.sheet.type) {
+    panel.innerHTML = `<div class="grip"></div>${sheetHtml()}`;
+    return;
+  }
+  root.dataset.type = ui.sheet.type;
   root.innerHTML = `<div class="overlay" data-act="closeSheet"></div><div class="panel"><div class="grip"></div>${sheetHtml()}</div>`;
   document.body.style.overflow = 'hidden';
 }
@@ -743,7 +880,7 @@ function retarget(c) {
 }
 
 const actions = {
-  tab(el) { ui.tab = el.dataset.tab; ui.historyId = null; render(); window.scrollTo(0, 0); },
+  tab(el) { ui.tab = el.dataset.tab; ui.historyId = null; render(true); window.scrollTo(0, 0); },
   settings() { openSheet({ type: 'settings' }); },
   closeSheet() { closeSheet(); },
 
@@ -770,6 +907,7 @@ const actions = {
     addExercise(ex.id);
   },
 
+  // Updates the input in place so press-and-hold can keep stepping.
   step(el) {
     const c = setCtx(el);
     const f = el.dataset.f;
@@ -784,26 +922,64 @@ const actions = {
       c.s.reps = Math.max(0, base + d);
     }
     save();
-    refreshRow(c.row);
+    const input = c.row.querySelector(`[data-field="${f}"]`);
+    input.value = f === 'weight' ? fmtW(c.s.weight) : c.s.reps;
+    input.classList.remove('bump');
+    void input.offsetWidth;
+    input.classList.add('bump');
+    syncRow(c.row, c.s);
+    navigator.vibrate?.(4);
   },
   done(el) {
     const c = setCtx(el);
+    let pr = false;
     if (!c.s.done) {
       if (c.s.reps == null) c.s.reps = c.s.target?.reps ?? null;
       if (c.s.weight == null) c.s.weight = c.s.target?.weight ?? (isBW(c.ex) ? 0 : null);
       if (c.s.reps == null || c.s.reps <= 0) { toast('Enter reps first'); return; }
       if (c.s.weight == null && !isBW(c.ex)) { toast('Enter weight first'); return; }
       c.s.done = true;
+      if (c.ctx === 'active' && !c.s.warmup) {
+        const best = bestBefore(c);
+        pr = best != null && epley(loadOf(c.ex, c.s.weight), c.s.reps) > best + 0.01;
+      }
+      c.s.pr = pr;
       if (c.ctx === 'active') { unlockAudio(); startTimer(c.e.exId); }
     } else {
       c.s.done = false;
+      c.s.pr = false;
     }
     save();
     refreshRow(c.row);
-    if (c.s.done) c.card.querySelector(`.set-row[data-s="${c.row.dataset.s}"]`)?.classList.add('just-done');
+    const row = c.card.querySelector(`.set-row[data-s="${c.row.dataset.s}"]`);
+    if (c.s.done) row?.classList.add('just-done');
+    if (pr) {
+      prToast(`${c.ex.name}: ${weightLabel(c.ex, c.s.weight)} × ${c.s.reps}`);
+      navigator.vibrate?.([30, 40, 30]);
+    }
     c.card.classList.toggle('complete', cardComplete(c.e));
     updateProgress();
   },
+  platesSheet(el) {
+    const c = setCtx(el);
+    const s = c.e.sets.find(x => !x.done) || c.e.sets.at(-1);
+    openSheet({ type: 'plates', exId: c.e.exId, weight: s?.weight ?? s?.target?.weight ?? 135, bar: 45 });
+  },
+  platesStep(el) {
+    ui.sheet.weight = Math.max(0, ui.sheet.weight + +el.dataset.d);
+    renderSheet();
+  },
+  platesBar(el) { ui.sheet.bar = +el.dataset.v; renderSheet(); },
+  closeCelebrate() { document.querySelector('.celebrate')?.remove(); },
+  chartPt(el) {
+    const info = $('#chartInfo');
+    const p = ui.chartPoints?.[+el.dataset.i];
+    if (!info || !p) return;
+    document.querySelectorAll('.chart .pt').forEach(n => n.classList.toggle('sel', n.dataset.i === el.dataset.i));
+    info.innerHTML = `<b>${fmtDate(new Date(p.x).toISOString())}</b> · ${Math.round(p.y).toLocaleString()} lb<br><span class="muted">${esc(p.info || '')}</span>`;
+    info.classList.add('on');
+  },
+  accent(el) { state.settings.accent = el.dataset.v; save(); applyTheme(); renderSheet(); },
   warmup(el) {
     const c = setCtx(el);
     c.s.warmup = !c.s.warmup;
@@ -919,9 +1095,29 @@ function applyRest(secs) {
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-act]');
   if (!el || el.disabled) return;
+  // A press-and-hold already stepped; skip the click that follows it.
+  if (el.dataset.act === 'step' && hold.repeated) { hold.repeated = false; return; }
   const fn = actions[el.dataset.act];
   if (fn) { ev.preventDefault(); fn(el); }
 });
+
+// Press and hold a +/− button to keep stepping.
+const hold = { timer: null, interval: null, repeated: false };
+function endHold() {
+  clearTimeout(hold.timer);
+  clearInterval(hold.interval);
+  hold.timer = hold.interval = null;
+}
+document.addEventListener('pointerdown', ev => {
+  const el = ev.target.closest('[data-act="step"]');
+  if (!el) return;
+  hold.repeated = false;
+  endHold();
+  hold.timer = setTimeout(() => {
+    hold.interval = setInterval(() => { hold.repeated = true; actions.step(el); }, 110);
+  }, 420);
+});
+['pointerup', 'pointercancel', 'pointerleave'].forEach(t => document.addEventListener(t, endHold, true));
 
 document.addEventListener('input', ev => {
   const el = ev.target;
@@ -951,7 +1147,7 @@ function syncRow(row, s) {
     goal.className = 'goal';
     row.appendChild(goal);
   }
-  if (goal) goal.textContent = s.target ? (miss ? `missed · goal ${s.target.reps}` : `goal ${s.target.reps}`) : '';
+  if (goal) goal.textContent = goalText(s);
 }
 
 document.addEventListener('change', ev => {
@@ -970,4 +1166,5 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 }
 navigator.storage?.persist?.().catch(() => {});
 if (state.activeWorkout) { ui.tab = 'workout'; requestWakeLock(); }
-render();
+applyTheme();
+render(true);
