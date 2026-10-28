@@ -15,11 +15,11 @@ export const MUSCLES = {
 
 // Order of muscles here is the order suggestions are grouped in.
 export const DAY_TYPES = [
-  { id: 'upper', name: 'Upper', muscles: ['back', 'biceps', 'chest', 'shoulders', 'triceps', 'abs'] },
-  { id: 'lower', name: 'Lower', muscles: ['quads', 'hamstrings', 'glutes', 'calves', 'abs'] },
-  { id: 'back_bi', name: 'Back & Biceps', muscles: ['back', 'biceps', 'abs'] },
-  { id: 'chest_sh_tri', name: 'Chest, Shoulders & Triceps', muscles: ['chest', 'shoulders', 'triceps', 'abs'] },
-  { id: 'legs', name: 'Legs', muscles: ['quads', 'hamstrings', 'glutes', 'calves'] },
+  { id: 'upper', name: 'Upper', icon: '💪', color: '#9b8cff', muscles: ['back', 'biceps', 'chest', 'shoulders', 'triceps', 'abs'] },
+  { id: 'lower', name: 'Lower', icon: '🦵', color: '#ff9447', muscles: ['quads', 'hamstrings', 'glutes', 'calves', 'abs'] },
+  { id: 'back_bi', name: 'Back & Biceps', icon: '🏋️', color: '#3ed4ff', muscles: ['back', 'biceps', 'abs'] },
+  { id: 'chest_sh_tri', name: 'Chest, Shoulders & Triceps', icon: '🔥', color: '#ff5f9e', muscles: ['chest', 'shoulders', 'triceps', 'abs'] },
+  { id: 'legs', name: 'Legs', icon: '⚡', color: '#c4f542', muscles: ['quads', 'hamstrings', 'glutes', 'calves'] },
 ];
 
 export const EQUIPMENT = {

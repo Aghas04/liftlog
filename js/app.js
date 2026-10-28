@@ -26,6 +26,7 @@ const ICON = {
   health: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
 };
 
 // ---------- Helpers ----------
@@ -223,18 +224,20 @@ function tick() {
   // Build the controls once so taps aren't lost when the numbers update.
   if (!el.firstElementChild) {
     el.innerHTML = `
-      <div class="t"></div>
-      <div class="lbl"></div>
+      <div class="ring"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="19" class="track"/><circle cx="22" cy="22" r="19" class="fill"/></svg></div>
+      <div class="tt"><div class="t"></div><div class="lbl"></div></div>
       <button data-act="timerAdj" data-d="-15">−15</button>
       <button data-act="timerAdj" data-d="15">+15</button>
-      <button data-act="timerStop" aria-label="Stop timer">✕</button>
-      <div class="bar"></div>`;
+      <button data-act="timerStop" aria-label="Stop timer">✕</button>`;
   }
+  const dt = dayType(w.dayType);
   el.hidden = false;
   el.className = over ? 'over' : '';
+  el.style.setProperty('--c', dt?.color || '');
   el.querySelector('.t').textContent = txt;
-  el.querySelector('.lbl').innerHTML = `${over ? 'Rest done — next set!' : 'Rest'}<br>${esc(exercise(t.exId).name)}`;
-  el.querySelector('.bar').style.width = pct + '%';
+  el.querySelector('.lbl').textContent = over ? 'Rest done — next set!' : `Rest · ${exercise(t.exId).name}`;
+  const C = 2 * Math.PI * 19;
+  el.querySelector('.fill').style.strokeDasharray = `${(pct / 100) * C} ${C}`;
 }
 setInterval(tick, 500);
 
@@ -293,9 +296,9 @@ function exCard(w, ctx, ei, live) {
     : '';
 
   return `
-  <section class="ex-card" data-w="${ctx}" data-e="${ei}">
+  <section class="ex-card ${cardComplete(e) ? 'complete' : ''}" data-w="${ctx}" data-e="${ei}" style="--c:${dayType(w.dayType)?.color}">
     <div class="ex-head">
-      <h3>${esc(ex.name)}</h3>
+      <div><span class="tag">${MUSCLES[ex.muscle] || ''}</span><h3>${esc(ex.name)}</h3></div>
       <div class="ex-tools">
         ${live ? `<button data-act="restSheet">⏱ ${restFor(e.exId)}s</button>` : ''}
         <button data-act="removeEx" aria-label="Remove exercise">✕</button>
@@ -317,6 +320,10 @@ function exCard(w, ctx, ei, live) {
   </section>`;
 }
 
+function cardComplete(e) {
+  return e.sets.length > 0 && e.sets.every(s => s.done);
+}
+
 function refreshRow(row) {
   const { w: ctx, e: ei, s: si } = row.dataset;
   const w = getW(ctx);
@@ -332,42 +339,95 @@ function refreshCard(card) {
   const tmp = document.createElement('div');
   tmp.innerHTML = exCard(getW(ctx), ctx, +ei, ctx === 'active');
   card.replaceWith(tmp.firstElementChild);
+  updateProgress();
 }
 
 // ---------- Rendering: views ----------
+function setProgress(w) {
+  let done = 0, total = 0;
+  for (const e of w.exercises) for (const s of e.sets) if (!s.warmup) { total++; if (s.done) done++; }
+  return { done, total };
+}
+
+function updateProgress() {
+  const w = state.activeWorkout;
+  const el = $('#setProg');
+  if (!w || !el) return;
+  const { done, total } = setProgress(w);
+  el.querySelector('i').style.width = total ? (done / total) * 100 + '%' : '0';
+  $('#setCount').textContent = `${done}/${total} sets`;
+}
+
 function viewWorkout() {
   const w = state.activeWorkout;
   if (w) {
     const dt = dayType(w.dayType);
+    const { done, total } = setProgress(w);
     return `
-    <div class="workout-head">
-      <div class="top">
-        <div><h1>${esc(dt?.name)}</h1><div class="sub" id="elapsed">0 min</div></div>
-        <button class="finish-btn" data-act="finishSheet">Finish</button>
+    <div class="active" style="--c:${dt.color}">
+      <div class="workout-head">
+        <div class="top">
+          <div class="wh-title"><span class="day-ico sm">${dt.icon}</span>
+            <div><h1>${esc(dt.name)}</h1><div class="sub"><span id="elapsed">0 min</span> · <span id="setCount">${done}/${total} sets</span></div></div></div>
+          <button class="finish-btn" data-act="finishSheet">Finish</button>
+        </div>
+        <div class="prog" id="setProg"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
       </div>
-    </div>
-    ${w.exercises.map((_, i) => exCard(w, 'active', i, true)).join('')}
-    ${w.exercises.length ? '' : `<div class="empty">Add your first exercise to get started.</div>`}
-    <button class="btn primary" data-act="picker">+ Add exercise</button>`;
+      ${w.exercises.map((_, i) => exCard(w, 'active', i, true)).join('')}
+      ${w.exercises.length ? '' : `<div class="empty"><div class="big-ico">${dt.icon}</div>Add your first exercise to get started.</div>`}
+      <button class="btn primary day" data-act="picker">+ Add exercise</button>
+    </div>`;
   }
 
   const needsBackup = state.workouts.length >= 3 &&
     (!state.settings.lastBackup || Date.now() - new Date(state.settings.lastBackup).getTime() > 14 * DAY);
-  const lastOf = id => [...state.workouts].reverse().find(x => x.dayType === id);
+  const lastOf = id => [...state.workouts].sort((a, b) => b.date.localeCompare(a.date)).find(x => x.dayType === id);
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const { thisWeek, streak } = weekStats();
+  const days = new Set(state.workouts.map(w => startOfDay(new Date(w.date).getTime())));
+  const monday = weekKey(Date.now());
+  const today = startOfDay(Date.now());
+  const week = ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((l, i) => {
+    const t = startOfDay(monday + i * DAY + 3600000);
+    return `<div class="wd ${days.has(t) ? 'on' : ''} ${t === today ? 'today' : ''}"><span>${l}</span><i></i></div>`;
+  }).join('');
   return `
   <div class="top">
-    <div><h1>Start workout</h1><div class="sub">${new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
+    <div><div class="eyebrow">${greeting}</div><h1>Let's lift.</h1></div>
     <button class="icon-btn" data-act="settings" aria-label="Settings">${ICON.gear}</button>
   </div>
+  <div class="week-card">
+    <div class="week-stats">
+      <div><b>${thisWeek}</b><span>this week</span></div>
+      <div><b>${streak ? '🔥 ' + streak : '0'}</b><span>week streak</span></div>
+      <div><b>${state.workouts.length}</b><span>total</span></div>
+    </div>
+    <div class="week-days">${week}</div>
+  </div>
   ${needsBackup ? `<div class="banner"><div>It's been a while since your last backup.</div><button data-act="export">Back up</button></div>` : ''}
+  <div class="section-title">Pick today's split</div>
   <div class="days">
     ${DAY_TYPES.map(d => {
       const l = lastOf(d.id);
-      return `<button class="day-btn" data-act="start" data-day="${d.id}">
-        <div><strong>${esc(d.name)}</strong><span class="muted">${l ? `Last: ${relDays(l.date)}` : 'Not done yet'}</span></div>
-        <span class="go">›</span></button>`;
+      return `<button class="day-btn" style="--c:${d.color}" data-act="start" data-day="${d.id}">
+        <span class="day-ico">${d.icon}</span>
+        <div class="day-txt"><strong>${esc(d.name)}</strong>
+          <span class="muscles">${d.muscles.map(m => MUSCLES[m]).join(' · ')}</span>
+          <span class="when">${l ? `Last done ${relDays(l.date)}` : 'Not done yet'}</span></div>
+        <span class="go">${ICON.arrow}</span></button>`;
     }).join('')}
   </div>`;
+}
+
+function weekStats() {
+  const weeks = new Set(state.workouts.map(w => weekKey(new Date(w.date).getTime())));
+  let streak = 0;
+  let wk = weekKey(Date.now());
+  if (!weeks.has(wk)) wk -= 7 * DAY;
+  while (weeks.has(wk)) { streak++; wk = weekKey(wk - 3 * DAY); }
+  const thisWeek = state.workouts.filter(w => weekKey(new Date(w.date).getTime()) === weekKey(Date.now())).length;
+  return { thisWeek, streak };
 }
 
 function viewHistory() {
@@ -390,9 +450,13 @@ function viewHistory() {
     const head = m !== month ? `<div class="section-title">${m}</div>` : '';
     month = m;
     const sets = w.exercises.reduce((n, e) => n + workingSets(e).length, 0);
-    return `${head}<button class="card hist" data-act="openWorkout" data-id="${w.id}">
-      <div class="top-line"><strong>${esc(dayType(w.dayType)?.name)}</strong><span class="muted small">${fmtDate(w.date)}</span></div>
-      <div class="ex-names">${w.exercises.length} exercises · ${sets} sets · ${esc(w.exercises.map(e => exercise(e.exId).name).join(', '))}</div>
+    const dt = dayType(w.dayType);
+    return `${head}<button class="card hist" style="--c:${dt?.color}" data-act="openWorkout" data-id="${w.id}">
+      <span class="day-ico sm">${dt?.icon || ''}</span>
+      <div class="hist-txt">
+        <div class="top-line"><strong>${esc(dt?.name)}</strong><span class="muted small">${fmtDate(w.date)}</span></div>
+        <div class="ex-names">${w.exercises.length} exercises · ${sets} sets · ${esc(w.exercises.map(e => exercise(e.exId).name).join(', '))}</div>
+      </div>
     </button>`;
   }).join('');
 }
@@ -406,13 +470,7 @@ function weekKey(t) {
 function viewProgress() {
   if (!state.workouts.length) return `<div class="top"><h1>Progress</h1></div><div class="empty">Log a few workouts and your progress charts will appear here.</div>`;
 
-  // Summary
-  const weeks = new Set(state.workouts.map(w => weekKey(new Date(w.date).getTime())));
-  let streak = 0;
-  let wk = weekKey(Date.now());
-  if (!weeks.has(wk)) wk -= 7 * DAY;
-  while (weeks.has(wk)) { streak++; wk = weekKey(wk - 3 * DAY); }
-  const thisWeek = state.workouts.filter(w => weekKey(new Date(w.date).getTime()) === weekKey(Date.now())).length;
+  const { thisWeek, streak } = weekStats();
 
   // Calendar: last 16 weeks, Monday-first columns
   const days = new Set(state.workouts.map(w => startOfDay(new Date(w.date).getTime())));
@@ -742,6 +800,9 @@ const actions = {
     }
     save();
     refreshRow(c.row);
+    if (c.s.done) c.card.querySelector(`.set-row[data-s="${c.row.dataset.s}"]`)?.classList.add('just-done');
+    c.card.classList.toggle('complete', cardComplete(c.e));
+    updateProgress();
   },
   warmup(el) {
     const c = setCtx(el);
