@@ -66,8 +66,11 @@ export function suggest(ex, history, opts) {
   const [zMin, zMax] = zoneFor(ex);
   const hardCap = zMax + 5;
 
-  const valid = history.filter(s => workingSets(s).length);
-  if (!valid.length) return null;
+  const usable = history.filter(s => workingSets(s).length);
+  if (!usable.length) return null;
+  // Deload sessions are deliberately light; ignore them unless that's all there is.
+  const valid = usable.some(s => !s.deload) ? usable.filter(s => !s.deload) : usable;
+  const lastDate = usable[usable.length - 1].date;
   const last = valid[valid.length - 1];
   const lastSets = workingSets(last);
   const topWeight = Math.max(...lastSets.map(s => s.weight || 0));
@@ -102,7 +105,7 @@ export function suggest(ex, history, opts) {
   if (last.difficulty === 'easy') est *= 1.025;
   if (last.difficulty === 'too_hard') est *= 0.975;
 
-  const gapDays = (now - new Date(last.date).getTime()) / DAY;
+  const gapDays = (now - new Date(lastDate).getTime()) / DAY;
   if (gapDays > 14) {
     est *= 0.93;
     const w = Math.max(0, roundTo(topWeight * 0.9, inc));
@@ -170,4 +173,33 @@ export function targetFor(sug, ex, weight, setIndex, bw) {
   if (load <= 0) return null;
   const reps = repsAt(sug.est, load) + (sug.bonus || 0) - (sug.drop || 0) * setIndex;
   return Math.max(1, Math.round(reps));
+}
+
+// Ramp-up sets before the first working set. Barbell warm-ups never go
+// below the empty bar.
+export function warmupSets(ex, workWeight, inc) {
+  if (!(workWeight > 0)) return [];
+  const bar = ex.equipment === 'barbell' ? 45 : 0;
+  const steps = bar && workWeight >= 95 ? [[0.4, 10], [0.6, 5], [0.8, 3]] : [[0.5, 10], [0.75, 5]];
+  const out = [];
+  for (const [p, reps] of steps) {
+    const w = Math.max(bar, Math.round((workWeight * p) / inc) * inc);
+    if (w <= 0 || w >= workWeight || out.at(-1)?.weight === w) continue;
+    out.push({ weight: w, reps });
+  }
+  return out;
+}
+
+// Rough weight conversion when swapping to a lift on other equipment.
+const SWAP_FACTOR = {
+  barbell: { barbell: 0.9, dumbbell: 0.4, cable: 0.8, machine: 1 },
+  dumbbell: { barbell: 2.2, dumbbell: 0.9, cable: 1.8, machine: 2 },
+  cable: { barbell: 1.1, dumbbell: 0.5, cable: 0.9, machine: 1 },
+  machine: { barbell: 0.9, dumbbell: 0.45, cable: 1, machine: 0.9 },
+};
+
+export function swapWeight(fromEx, toEx, weight, inc) {
+  const f = SWAP_FACTOR[fromEx.equipment]?.[toEx.equipment];
+  if (!f || !(weight > 0)) return null;
+  return Math.max(inc, Math.round((weight * f) / inc) * inc);
 }

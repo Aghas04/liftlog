@@ -112,3 +112,27 @@ test('warm-up sets are ignored', () => {
   assert.equal(s.weight, 120);
   assert.equal(s.reps.length, 3);
 });
+
+test('warm-ups ramp up and stay under the working weight', async () => {
+  const { warmupSets } = await import('../js/engine.js');
+  const w = warmupSets({ equipment: 'barbell' }, 225, 5);
+  assert.deepEqual(w.map(s => s.weight), [90, 135, 180]);
+  assert.ok(warmupSets({ equipment: 'barbell' }, 65, 5).every(s => s.weight >= 45 && s.weight < 65));
+  assert.deepEqual(warmupSets({ equipment: 'cable' }, 0, 5), []);
+});
+
+test('swap weight converts between equipment', async () => {
+  const { swapWeight } = await import('../js/engine.js');
+  assert.equal(swapWeight({ equipment: 'barbell' }, { equipment: 'dumbbell' }, 185, 5), 75);
+  assert.equal(swapWeight({ equipment: 'bodyweight' }, { equipment: 'cable' }, 0, 5), null);
+});
+
+test('deload sessions do not lower the next suggestion', () => {
+  const h = [
+    { date: daysAgo(10), sets: sets(150, [10, 9, 8]) },
+    { date: daysAgo(3), deload: true, sets: sets(125, [10, 9, 8]) },
+  ];
+  const s = suggest(row, h, { increment: 5, now: NOW });
+  assert.equal(s.weight, 150);
+  assert.notEqual(s.kind, 'break');
+});

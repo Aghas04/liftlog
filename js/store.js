@@ -6,13 +6,20 @@ const KEY = 'liftlog.v1';
 function emptyState() {
   return {
     version: 1,
-    settings: { defaultRest: 90, lastBackup: null },
+    settings: { defaultRest: 90, lastBackup: null, weeklyTarget: 10, accent: 'lime', standards: null, deloadUntil: null, deloadDismissed: null },
     customExercises: [],
-    exerciseSettings: {}, // exId -> { rest }
+    exerciseSettings: {}, // exId -> { rest, increment, note }
     workouts: [],         // finished workouts, oldest first
     activeWorkout: null,
     bodyweight: [],       // { id, date: 'YYYY-MM-DD', lb }
+    measurements: [],     // { id, date: 'YYYY-MM-DD', kind, value }
+    achievements: {},     // achievement id -> ISO date earned
   };
+}
+
+function withDefaults(data) {
+  const base = emptyState();
+  return { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } };
 }
 
 export let state = load();
@@ -20,7 +27,7 @@ export let state = load();
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...emptyState(), ...JSON.parse(raw) };
+    if (raw) return withDefaults(JSON.parse(raw));
   } catch (e) {
     console.error('Could not load saved data', e);
   }
@@ -37,7 +44,7 @@ export function save() {
 }
 
 export function replaceState(next) {
-  state = { ...emptyState(), ...next };
+  state = withDefaults(next);
   save();
 }
 
@@ -52,7 +59,16 @@ export function exercise(id) {
 }
 
 export function increment(ex) {
-  return ex.increment || EQUIPMENT[ex.equipment]?.increment || 5;
+  return state.exerciseSettings[ex.id]?.increment || ex.increment || EQUIPMENT[ex.equipment]?.increment || 5;
+}
+
+export function exSetting(exId, key) {
+  return state.exerciseSettings[exId]?.[key];
+}
+
+export function setExSetting(exId, key, value) {
+  state.exerciseSettings[exId] = { ...(state.exerciseSettings[exId] || {}), [key]: value };
+  save();
 }
 
 export function restFor(exId) {
