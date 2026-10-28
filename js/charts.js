@@ -6,7 +6,7 @@ const PAD = { l: 38, r: 12, t: 14, b: 24 };
 const DAY = 86400000;
 
 const fmt = v => (Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + 'k' : String(Math.round(v)));
-const shortDate = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const dateLabel = (t, withYear) => new Date(t).toLocaleDateString(undefined, withYear ? { month: 'short', year: 'numeric' } : { month: 'short', day: 'numeric' });
 
 function star(cx, cy, r) {
   const pts = [];
@@ -54,6 +54,8 @@ export function lineChart(points, opts = {}) {
   minY = Math.max(0, minY - padY);
   maxY += padY;
 
+  // Spans over ~11 months show the year so "Oct 28" isn't ambiguous.
+  const long = xs[xs.length - 1] - xs[0] > 330 * DAY;
   const sx = x => PAD.l + ((x - minX) / (maxX - minX)) * (W - PAD.l - PAD.r);
   const sy = y => H - PAD.b - ((y - minY) / (maxY - minY)) * (H - PAD.t - PAD.b);
 
@@ -67,15 +69,18 @@ export function lineChart(points, opts = {}) {
   const d = points.map((p, i) => `${i ? 'L' : 'M'}${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(' ');
   const area = `${d} L${sx(points[points.length - 1].x).toFixed(1)},${H - PAD.b} L${sx(points[0].x).toFixed(1)},${H - PAD.b} Z`;
 
+  // Too many points to show dots cleanly; keep tap targets and PR stars.
+  const dense = points.length > 40;
   let best = -Infinity;
   const marks = points.map((p, i) => {
     const cx = sx(p.x).toFixed(1);
     const cy = sy(p.y).toFixed(1);
-    const isPR = opts.prs && i > 0 && p.y > best + 0.01;
+    // A point may carry its own PR flag (computed over full history when the chart is filtered).
+    const isPR = opts.prs && (p.pr ?? (i > 0 && p.y > best + 0.01));
     best = Math.max(best, p.y);
     const mark = isPR
       ? `<polygon points="${star(+cx, +cy, 7)}" class="pt pr" data-i="${i}"/>`
-      : `<circle cx="${cx}" cy="${cy}" r="3.5" class="pt" data-i="${i}"/>`;
+      : `<circle cx="${cx}" cy="${cy}" r="${dense ? 0 : 3.5}" class="pt" data-i="${i}"/>`;
     return `${mark}<circle cx="${cx}" cy="${cy}" r="14" fill="transparent" data-act="chartPt" data-i="${i}"/>`;
   }).join('');
 
@@ -93,7 +98,7 @@ export function lineChart(points, opts = {}) {
     ${trendLine}
     <path d="${d}" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
     ${marks}
-    <text x="${PAD.l}" y="${H - 6}" fill="#8b93a1" font-size="10">${shortDate(points[0].x)}</text>
-    <text x="${W - PAD.r}" y="${H - 6}" fill="#8b93a1" font-size="10" text-anchor="end">${trend ? 'in 2 wks' : shortDate(points[points.length - 1].x)}</text>
+    <text x="${PAD.l}" y="${H - 6}" fill="#8b93a1" font-size="10">${dateLabel(points[0].x, long)}</text>
+    <text x="${W - PAD.r}" y="${H - 6}" fill="#8b93a1" font-size="10" text-anchor="end">${trend ? 'in 2 wks' : dateLabel(points[points.length - 1].x, long)}</text>
   </svg>`;
 }

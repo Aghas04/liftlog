@@ -31,7 +31,12 @@ const ui = {
   progressEx: null,
   progressMetric: 'e1rm',
   sheet: null,
+  ranges: loadRanges(), // chart key -> range id
 };
+
+function loadRanges() {
+  try { return JSON.parse(localStorage.getItem('liftlog.ranges')) || {}; } catch { return {}; }
+}
 
 // ---------- Icons ----------
 const ICON = {
@@ -662,6 +667,30 @@ function weekKey(t) {
   return d.getTime();
 }
 
+// Chart time ranges: [id, label, days, phrase]
+const RANGES = [
+  ['1m', '1M', 31, 'in 1 month'], ['3m', '3M', 92, 'in 3 months'], ['6m', '6M', 183, 'in 6 months'],
+  ['1y', '1Y', 366, 'in 1 year'], ['5y', '5Y', 1827, 'in 5 years'], ['all', 'All', Infinity, 'all time'],
+];
+const rangeOf = key => RANGES.find(r => r[0] === (ui.ranges[key] || 'all'));
+
+function inRange(points, key) {
+  const since = Date.now() - rangeOf(key)[2] * DAY;
+  return points.filter(p => p.x >= since);
+}
+
+function rangeChips(key) {
+  const cur = rangeOf(key)[0];
+  return `<div class="range">${RANGES.map(([v, l]) => `<button data-act="range" data-k="${key}" data-v="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+}
+
+// Chart for a filtered range, or a hint when there isn't enough data.
+function rangedChart(points, total, opts, emptyMsg) {
+  if (points.length > 1) return lineChart(points, opts);
+  const msg = total > 1 ? 'Not enough entries in this range. Try a longer one.' : emptyMsg;
+  return `<div class="empty" style="padding:24px">${msg}</div>`;
+}
+
 function subTabs(act, current, items) {
   return `<div class="seg subtabs">${items.map(([v, l]) => `<button data-act="${act}" data-v="${v}" class="${current === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
 }
@@ -756,11 +785,15 @@ function progressLifts() {
     top: h => Math.max(...workingSets(h).map(s => loadOf(ex, s.weight, h.date))),
     volume: h => sessionVolume(ex, workingSets(h), h.date),
   }[ui.progressMetric];
-  const points = hist.map(h => ({ x: new Date(h.date).getTime(), y: metricFn(h), info: setsSummary(ex, h.sets) })).filter(p => p.y > 0);
+  const allPoints = hist.map(h => ({ x: new Date(h.date).getTime(), y: metricFn(h), info: setsSummary(ex, h.sets) })).filter(p => p.y > 0);
+  // Flag PRs over the full history so a short range doesn't invent new "bests".
+  let best = -Infinity;
+  allPoints.forEach((p, i) => { p.pr = i > 0 && p.y > best + 0.01; best = Math.max(best, p.y); });
+  const points = inRange(allPoints, 'lift');
   ui.chartPoints = points;
-  const lastY = points.at(-1)?.y ?? 0;
+  const lastY = allPoints.at(-1)?.y ?? 0;
   const firstY = points[0]?.y ?? 0;
-  const delta = firstY ? ((lastY - firstY) / firstY) * 100 : 0;
+  const delta = firstY && points.length > 1 ? ((points.at(-1).y - firstY) / firstY) * 100 : 0;
   const metricName = { e1rm: 'Est. 1-rep max', top: 'Top set weight', volume: 'Session volume' }[ui.progressMetric];
 
   // PRs
@@ -800,8 +833,9 @@ function progressLifts() {
   </div>
   <div class="chart-wrap">
     <div class="chart-head"><div><div class="muted small">${metricName}</div><b>${Math.round(lastY).toLocaleString()} lb</b></div>
-      ${points.length > 1 ? `<span class="delta ${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(1)}% since first</span>` : ''}</div>
-    ${points.length > 1 ? lineChart(points, { prs: ui.progressMetric !== 'volume', trend: true }) : `<div class="empty" style="padding:24px">Log this lift again to see a trend.</div>`}
+      ${points.length > 1 ? `<span class="delta ${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(1)}% ${rangeOf('lift')[3]}</span>` : ''}</div>
+    ${allPoints.length > 1 ? rangeChips('lift') : ''}
+    ${rangedChart(points, allPoints.length, { prs: ui.progressMetric !== 'volume', trend: true }, 'Log this lift again to see a trend.')}
     ${points.length > 1 ? `<div class="chart-info" id="chartInfo">Tap a point to see that session. ★ = new best${points.length >= 3 ? ' · dotted line = trend' : ''}</div>` : ''}
   </div>
 
@@ -849,11 +883,10 @@ function viewHealth() {
 
 function healthWeight() {
   const entries = [...state.bodyweight].sort((a, b) => a.date.localeCompare(b.date));
-  const points = entries.map(b => ({ x: new Date(b.date + 'T12:00:00').getTime(), y: b.lb, info: '' }));
+  const allPoints = entries.map(b => ({ x: new Date(b.date + 'T12:00:00').getTime(), y: b.lb, info: '' }));
+  const points = inRange(allPoints, 'bw');
   const cur = entries.at(-1);
-  const monthAgo = new Date(Date.now() - 30 * DAY).toISOString().slice(0, 10);
-  const base = [...entries].reverse().find(b => b.date <= monthAgo) || entries[0];
-  const change = cur && base && cur !== base ? cur.lb - base.lb : null;
+  const change = points.length > 1 ? points.at(-1).y - points[0].y : null;
   return `
   <div class="card">
     <div class="row" style="align-items:flex-end">
@@ -865,8 +898,9 @@ function healthWeight() {
   ${cur ? `
   <div class="chart-wrap">
     <div class="chart-head"><div><div class="muted small">Bodyweight</div><b>${fmtW(cur.lb)} lb</b></div>
-      ${change != null ? `<span class="delta muted">${change >= 0 ? '+' : ''}${fmtW(change)} lb / 30 days</span>` : ''}</div>
-    ${points.length > 1 ? lineChart(points, { trend: points.length >= 3 }) : `<div class="empty" style="padding:24px">Log again on another day to see a trend.</div>`}
+      ${change != null ? `<span class="delta muted">${change >= 0 ? '+' : ''}${fmtW(change)} lb ${rangeOf('bw')[3]}</span>` : ''}</div>
+    ${allPoints.length > 1 ? rangeChips('bw') : ''}
+    ${rangedChart(points, allPoints.length, { trend: points.length >= 3 }, 'Log again on another day to see a trend.')}
   </div>` : `<p class="muted small">Your bodyweight is also used for strength levels and for pull-ups, dips and other bodyweight lifts.</p>`}
   <div class="card import-card">
     <span class="imp-ico">❤️</span>
@@ -888,7 +922,9 @@ function healthBody() {
   if (!ui.measureKind || !byKind[ui.measureKind]) ui.measureKind = kinds[0];
   const sel = byKind[ui.measureKind] || [];
   const [selName, selUnit] = MEASURES[ui.measureKind] || [];
-  const points = sel.map(m => ({ x: new Date(m.date + 'T12:00:00').getTime(), y: m.value, info: '' }));
+  const allPoints = sel.map(m => ({ x: new Date(m.date + 'T12:00:00').getTime(), y: m.value, info: '' }));
+  const points = inRange(allPoints, 'measure');
+  const mChange = points.length > 1 ? points.at(-1).y - points[0].y : null;
   return `
   <div class="card">
     <div class="row" style="align-items:flex-end">
@@ -911,8 +947,10 @@ function healthBody() {
     }).join('')}
   </div>
   <div class="chart-wrap">
-    <div class="chart-head"><div><div class="muted small">${selName}</div><b>${fmtW(sel.at(-1).value)} ${selUnit}</b></div></div>
-    ${points.length > 1 ? lineChart(points, { trend: points.length >= 3 }) : `<div class="empty" style="padding:24px">Log ${selName.toLowerCase()} again to see a trend.</div>`}
+    <div class="chart-head"><div><div class="muted small">${selName}</div><b>${fmtW(sel.at(-1).value)} ${selUnit}</b></div>
+      ${mChange != null ? `<span class="delta muted">${mChange >= 0 ? '+' : ''}${fmtW(mChange)} ${selUnit} ${rangeOf('measure')[3]}</span>` : ''}</div>
+    ${allPoints.length > 1 ? rangeChips('measure') : ''}
+    ${rangedChart(points, allPoints.length, { trend: points.length >= 3 }, `Log ${selName.toLowerCase()} again to see a trend.`)}
   </div>
   <div class="card">
     ${[...sel].reverse().map(m => `<div class="set-line"><span>${new Date(m.date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
@@ -1442,6 +1480,11 @@ const actions = {
 
   // Progress
   progressView(el) { ui.progressView = el.dataset.v; render(true); },
+  range(el) {
+    ui.ranges[el.dataset.k] = el.dataset.v;
+    try { localStorage.setItem('liftlog.ranges', JSON.stringify(ui.ranges)); } catch { /* per-device nicety only */ }
+    render();
+  },
   recapNav(el) { ui.recapOffset = Math.min(0, (ui.recapOffset || 0) + +el.dataset.d); render(); },
 
   // Sharing
