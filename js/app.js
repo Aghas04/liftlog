@@ -515,7 +515,9 @@ function exCard(w, ctx, ei, live) {
   let sugHtml = '';
   if (live) {
     if (sug) {
-      sugHtml = `<div class="suggest"><div class="target">🎯 ${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}</div><div class="why">${esc(sug.reason)}</div></div>`;
+      // The workout-order adjustment stays out of sight mid-workout; it's one tap away.
+      sugHtml = `<div class="suggest"><div class="target">🎯 ${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}</div><div class="why">${esc(sug.reason)}</div>
+        ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}</div>`;
     } else {
       sugHtml = `<div class="suggest first"><div class="why">First time logging this lift — enter what you do and the app learns from here.</div></div>`;
     }

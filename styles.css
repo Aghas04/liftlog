@@ -557,3 +557,11 @@ label.btn { cursor: pointer; }
 .fp-bars .avg i { background: #5b6370; }
 .fp-bars b { text-align: right; }
 .fp-bars .avg span, .fp-bars .avg b { color: var(--muted); }
+
+/* ---------- "Why this number?" ---------- */
+.why-more { margin-top: 4px; font-size: 12px; }
+.why-more summary { list-style: none; cursor: pointer; color: var(--muted); font-weight: 700; display: inline-block; padding: 2px 0; }
+.why-more summary::-webkit-details-marker { display: none; }
+.why-more summary::after { content: ' ›'; }
+.why-more[open] summary::after { content: ' ⌄'; }
+.why-more p { margin: 4px 0 0; color: var(--muted); }

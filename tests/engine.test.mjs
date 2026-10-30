@@ -145,7 +145,8 @@ test('fatigue: same history, tired now asks for less than fresh now', async () =
   const tired = suggest(curl, h, { increment: 5, now: NOW, fatigue: fatigueLoad({ back: 20 }, 'biceps') });
   assert.ok(tired.est < fresh.est);
   assert.ok(tired.reps[0] < fresh.reps[0] || tired.weight < fresh.weight);
-  assert.match(tired.reason, /lowered/);
+  assert.match(tired.fatigueNote, /lower/);
+  assert.doesNotMatch(tired.reason, /lower/);
 });
 
 test('fatigue: tired last time, fresh now asks for more', () => {
@@ -154,7 +155,7 @@ test('fatigue: tired last time, fresh now asks for more', () => {
   const a = suggest(curl, tiredLast, { increment: 5, now: NOW, fatigue: 0 });
   const b = suggest(curl, freshLast, { increment: 5, now: NOW, fatigue: 0 });
   assert.ok(a.est > b.est);
-  assert.match(a.reason, /raised/);
+  assert.match(a.fatigueNote, /higher/);
 });
 
 test('fatigue load weights same muscle > helper > other', async () => {

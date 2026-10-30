@@ -172,7 +172,8 @@ export function suggest(ex, history, opts) {
   const build = (weight, first, kind, reason, bonus = 0) => {
     const reps = [];
     for (let i = 0; i < n; i++) reps.push(Math.max(1, Math.round(first - drop * i)));
-    return { weight: Math.max(0, weight), reps, kind, reason: reason + note, est, drop, bonus, fatigue };
+    // The fatigue explanation is kept separate so the app can show it only on request.
+    return { weight: Math.max(0, weight), reps, kind, reason, fatigueNote: note, est, drop, bonus, fatigue };
   };
 
   // Bodyweight lift with no bodyweight logged: progress reps only.
@@ -206,8 +207,8 @@ export function suggest(ex, history, opts) {
   est *= nowFactor;
   fatigue = { now: nowFactor, last: lastFactor, rate };
   const shift = Math.round((nowFactor / lastFactor - 1) * 100);
-  if (shift <= -3) note = ` Target lowered ~${-shift}% — more tiring work before it than last time.`;
-  else if (shift >= 3) note = ` Target raised ~${shift}% — you're fresher for it than last time.`;
+  if (shift <= -3) note = `Adjusted about ${-shift}% lower than last time because of the lifts before it today.`;
+  else if (shift >= 3) note = `Adjusted about ${shift}% higher than last time because it comes earlier in today's workout.`;
 
   const gapDays = (now - new Date(lastDate).getTime()) / DAY;
   if (gapDays > 14) {
@@ -263,9 +264,11 @@ export function suggest(ex, history, opts) {
   }
 
   const missedLast = sessionMissed(last);
+  // When the target sits below last time's reps (it comes later in today's
+  // workout), don't claim it's "one more than last time".
   const reason = missedLast
     ? 'Missed some targets — same weight, adjusted reps.'
-    : `Same weight, beat last time by a rep.`;
+    : shift <= -3 ? 'Same weight — go for every rep.' : 'Same weight, beat last time by a rep.';
   return build(w, t, missedLast ? 'hold' : 'reps', reason, 1);
 }
 
