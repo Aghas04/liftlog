@@ -415,13 +415,23 @@ export function planWeek(input) {
   // Volume: weekly targets minus what's already done this week, spread over
   // the remaining sessions (never above the per-session cap).
   let targets = weeklyTargets(profile, plan.volume);
+  const ease = plan.easeWeek && String(plan.easeWeek) === wk ? 0.7 : 1;
+  // Smallest useful dose per session: half of a normal session's share, at
+  // least 2 sets. Extra workouts during the week never shrink a planned
+  // session below this.
+  const fullTypes = sequenceTypes(split, 0, daysPerWeek);
+  const minSets = {};
+  for (const m of Object.keys(MUSCLES)) {
+    const freq = fullTypes.filter(t => PLAN_DAYS[t].muscles.includes(m)).length;
+    if (freq) minSets[m] = Math.min(PER_SESSION_CAP, Math.max(2, Math.round(((targets[m] * ease) / freq) * 0.5)));
+  }
   if (startIdx > 0 && weekdays.length) {
     const frac = weekdays.filter(d => d >= startIdx).length / weekdays.length;
     targets = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * frac)]));
     if (frac < 1) notes.push('Starting mid-week: volume scaled to the days left');
   }
-  if (plan.easeWeek && String(plan.easeWeek) === wk) {
-    targets = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * 0.7)]));
+  if (ease < 1) {
+    targets = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * ease)]));
     notes.push('Easing back in after a break: about 30% less volume this week');
   }
   // Each set counts once for its own muscle (not once per region). Indirect
@@ -429,7 +439,9 @@ export function planWeek(input) {
   // planned — so the plan doesn't shrink mid-week as sessions get done.
   const doneMuscle = {};
   const directDone = {};
-  for (const w of inWeek) {
+  // Workouts before a mid-week start are already covered by scaling the
+  // targets down, so they don't count again.
+  for (const w of inWeek.filter(x => (new Date(x.date).getDay() + 6) % 7 >= startIdx)) {
     for (const e of w.exercises) {
       const n = workingSets(e).length;
       if (!n) continue;
@@ -451,6 +463,7 @@ export function planWeek(input) {
       for (const i of idx) {
         let s = Math.min(PER_SESSION_CAP, Math.round(share));
         if (s > 0 && s < 2) s = 2;
+        s = Math.max(s, minSets[m] || 0);
         perSession[i][m] = s;
       }
     }

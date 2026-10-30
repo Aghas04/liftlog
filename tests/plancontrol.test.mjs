@@ -419,3 +419,40 @@ test('days before the plan started show as not planned, not as rest; a full week
   const next = currentWeek(plan, [], lookup, MONDAY + 7 * DAY);
   assert.deepEqual(next.days.map(d => d.kind), ['train', 'train', 'train', 'train', 'train', 'train', 'rest']);
 });
+
+// Off-plan workouts (any split), all sets done.
+const offPlan = (id, t, list) => ({ id, date: new Date(t).toISOString(), dayType: 'upper', exercises: list.map(([exId, n]) => ({ exId, sets: Array.from({ length: n }, () => ({ weight: 100, reps: 10, done: true })) })) });
+const sessionSets = d => d.session.items.reduce((a, i) => a + i.sets, 0);
+
+test('workouts from before a mid-week start do not shrink the plan a second time', () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5], minutes: 120 };
+  const wed = MONDAY + 2 * DAY;
+  const plan = fresh(p6, 'upper_lower', wed);
+  const old = [
+    offPlan('o1', MONDAY, [['bench_press', 4], ['lat_pulldown', 4], ['overhead_press', 4], ['cable_row', 4], ['db_curl', 3], ['rope_pushdown', 3]]),
+    offPlan('o2', MONDAY + DAY, [['squat', 4], ['rdl', 4], ['leg_press', 3], ['lying_leg_curl', 3], ['standing_calf_raise', 3]]),
+  ];
+  const without = currentWeek(plan, [], lookup, wed).days.filter(d => d.kind === 'train');
+  const withOld = currentWeek(plan, old, lookup, wed).days.filter(d => d.kind === 'train');
+  assert.deepEqual(withOld.map(sessionSets), without.map(sessionSets));
+});
+
+test('a planned session never shrinks to scraps, even after lots of extra training', () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5], minutes: 120 };
+  const plan = fresh(p6, 'upper_lower', MONDAY - 7 * DAY);
+  // Huge off-plan week Mon-Fri covering every muscle.
+  const big = [0, 1, 2, 3, 4].map(d => offPlan('b' + d, MONDAY + d * DAY, [
+    ['bench_press', 8], ['lat_pulldown', 8], ['overhead_press', 8], ['cable_row', 8], ['db_curl', 6], ['rope_pushdown', 6], ['wrist_curl', 4],
+    ['squat', 8], ['rdl', 8], ['hip_thrust', 8], ['standing_calf_raise', 6], ['cable_crunch', 6],
+  ].filter(([id]) => lookup(id))));
+  const sat = MONDAY + 5 * DAY;
+  const day = todayOf(currentWeek(plan, big, lookup, sat), sat);
+  assert.equal(day.kind, 'train');
+  const majors = PLAN_DAYS[day.session.type].muscles.filter(m => ['chest', 'back', 'quads', 'hamstrings', 'glutes', 'shoulders'].includes(m));
+  for (const m of majors) {
+    const n = day.session.items.filter(i => i.muscle === m).reduce((a, i) => a + i.sets, 0);
+    assert.ok(n >= 2, `${day.session.name}: ${m} only ${n} sets`);
+  }
+  assert.ok(day.session.items.length >= 5, `${day.session.name}: ${day.session.items.length} exercises`);
+  assert.ok(day.session.estMinutes >= 20, `${day.session.estMinutes} min`);
+});
