@@ -111,11 +111,41 @@ export function slotCounts(split, days) {
   return out;
 }
 
-/** Which A/B/C variant the session with sequence number seq uses. */
-export function slotFor(split, days, seq) {
-  const type = split.rotation[seq % split.rotation.length];
+/**
+ * Which A/B/C variant the session with sequence number seq uses. offset
+ * starts the rotation at a later day type (a new plan picks the freshest).
+ */
+export function slotFor(split, days, seq, offset = 0) {
+  const type = split.rotation[(seq + offset) % split.rotation.length];
   const occurrence = Math.floor(seq / split.rotation.length);
   return { type, slot: occurrence % slotCounts(split, days)[type] };
+}
+
+/**
+ * Where a new plan's rotation starts: the day type whose big muscles were
+ * trained least recently (last 3 days, any workout). E.g. after two upper
+ * days, a new Upper/Lower plan starts with Lower.
+ */
+export function rotationOffsetFor(split, workouts, lookup, now = Date.now()) {
+  const day0 = new Date(now); day0.setHours(0, 0, 0, 0);
+  const load = {};
+  for (const w of workouts) {
+    const d = new Date(w.date); d.setHours(0, 0, 0, 0);
+    const ago = Math.round((day0.getTime() - d.getTime()) / DAY);
+    if (ago < 0 || ago > 3) continue;
+    const wt = ago <= 1 ? 3 : ago === 2 ? 2 : 1;
+    for (const e of w.exercises) {
+      const m = lookup(e.exId).muscle;
+      if (workingSets(e).length && MAJOR.includes(m)) load[m] = Math.max(load[m] || 0, wt);
+    }
+  }
+  let best = 0, bestC = Infinity;
+  split.rotation.forEach((t, k) => {
+    const majors = PLAN_DAYS[t].muscles.filter(m => MAJOR.includes(m));
+    const c = majors.reduce((a, m) => a + (load[m] || 0), 0) / Math.max(1, majors.length);
+    if (c < bestC - 1e-9) { bestC = c; best = k; }
+  });
+  return best;
 }
 
 const sharedMajor = (a, b) => PLAN_DAYS[a].muscles.filter(m => MAJOR.includes(m) && PLAN_DAYS[b].muscles.includes(m)).length;
@@ -390,7 +420,7 @@ export function planWeek(input) {
     const i = (new Date(w.date).getDay() + 6) % 7;
     out[i].kind = 'done';
     out[i].workoutId = w.id;
-    if (w.plan) out[i].session = { seq: w.plan.seq, ...slotFor(split, daysPerWeek, w.plan.seq) };
+    if (w.plan) out[i].session = { seq: w.plan.seq, ...slotFor(split, daysPerWeek, w.plan.seq, plan.rotationOffset || 0) };
   }
   const trainedToday = out[todayIdx].kind === 'done';
   const remainingDays = weekdays.filter(d => d > todayIdx || (d === todayIdx && !trainedToday)).filter(d => out[d].kind !== 'done');
@@ -402,20 +432,24 @@ export function planWeek(input) {
   // Next sessions in the rotation: the lowest sequence numbers not done yet.
   const seqs = [];
   for (let s = 0; seqs.length < remainingDays.length && s < 10000; s++) if (!doneSeqs.has(s)) seqs.push(s);
-  let order = seqs.map(s => ({ seq: s, ...slotFor(split, daysPerWeek, s) }));
+  let order = seqs.map(s => ({ seq: s, ...slotFor(split, daysPerWeek, s, plan.rotationOffset || 0) }));
 
   // Reorder upcoming sessions to avoid back-to-back muscle overlap and hard
   // leg days around leg-heavy activities (keeps the rotation otherwise).
   const legActivity = new Set((profile.activities || []).filter(a => a.legs).map(a => a.day));
   if (order.length > 1 && order.length <= 6) {
-    const prevDone = (() => {
-      const d = remainingDays[0] - 1;
-      return d >= 0 && out[d]?.session ? out[d].session.type : null;
-    })();
+    // Big muscles trained the day before the next session, in any workout
+    // (planned or not), so the next session doesn't hit them again.
+    const prevMuscles = new Set();
+    const prevDay = remainingDays[0] - 1;
+    for (const w of inWeek) {
+      if ((new Date(w.date).getDay() + 6) % 7 !== prevDay) continue;
+      for (const e of w.exercises) if (workingSets(e).length && MAJOR.includes(lookup(e.exId).muscle)) prevMuscles.add(lookup(e.exId).muscle);
+    }
     const cost = perm => {
       const types = perm.map(o => o.type);
       let p = schedulePenalty(types, remainingDays, legActivity);
-      if (prevDone && remainingDays[0] - 1 >= 0) p += 2 * sharedMajor(prevDone, types[0]);
+      p += 2 * PLAN_DAYS[types[0]].muscles.filter(m => prevMuscles.has(m)).length;
       perm.forEach((o, i) => { p += Math.abs(o.seq - order[i].seq) * 0.01; }); // prefer the normal order
       return p;
     };

@@ -456,3 +456,51 @@ test('a planned session never shrinks to scraps, even after lots of extra traini
   assert.ok(day.session.items.length >= 5, `${day.session.name}: ${day.session.items.length} exercises`);
   assert.ok(day.session.estMinutes >= 20, `${day.session.estMinutes} min`);
 });
+
+// Recent off-plan workouts.
+const upperDay = [['bench_press', 4], ['lat_pulldown', 4], ['overhead_press', 3], ['cable_row', 3], ['db_curl', 3], ['rope_pushdown', 3]];
+const lowerDay = [['squat', 4], ['rdl', 4], ['leg_press', 3], ['lying_leg_curl', 3], ['standing_calf_raise', 3]];
+
+test('a new plan starts with the day you are freshest for', () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  // Lower Wed, Upper Thu and Fri, plan made Friday evening -> Saturday is Lower.
+  const ws = [offPlan('a', MONDAY + 2 * DAY, lowerDay), offPlan('b', MONDAY + 3 * DAY, upperDay), offPlan('c', MONDAY + 4 * DAY, upperDay)];
+  const fri = MONDAY + 4 * DAY + 12 * 3600000;
+  const plan = createPlan({ profile: p6, splitId: 'upper_lower', exercises: EXERCISES, workouts: ws, lookup, now: fri });
+  const sat = currentWeek(plan, ws, lookup, fri).days[5];
+  assert.equal(sat.kind, 'train');
+  assert.equal(sat.session.type, 'lower');
+  assert.equal(sat.session.name, 'Lower A');
+  // The rotation continues normally after that, A then B.
+  const next = currentWeek(plan, [...ws, doSession(plan, sat, MONDAY + 5 * DAY)], lookup, MONDAY + 7 * DAY);
+  assert.deepEqual(next.days.filter(d => d.kind === 'train').map(d => d.session.name).slice(0, 4), ['Upper A', 'Lower B', 'Upper B', 'Lower C']);
+  // After two leg days, PPL starts with push or pull, not legs.
+  const legs = [offPlan('l1', MONDAY + 3 * DAY, lowerDay), offPlan('l2', MONDAY + 4 * DAY, lowerDay)];
+  const ppl = createPlan({ profile: p6, splitId: 'ppl', exercises: EXERCISES, workouts: legs, lookup, now: fri });
+  assert.notEqual(currentWeek(ppl, legs, lookup, fri).days[5].session.type, 'legs');
+  // No recent training: the usual first day.
+  assert.equal(fresh(p6).rotationOffset, 0);
+});
+
+test('existing plans with no planned session yet pick their starting day too', () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  const ws = [offPlan('b', MONDAY + 3 * DAY, upperDay), offPlan('c', MONDAY + 4 * DAY, upperDay)];
+  const fri = MONDAY + 4 * DAY + 12 * 3600000;
+  const old = createPlan({ profile: p6, splitId: 'upper_lower', exercises: EXERCISES, workouts: ws, lookup, now: fri });
+  delete old.rotationOffset; // as saved by the previous version
+  const r = maintainPlan(old, ws, fri + 3600000, lookup);
+  assert.equal(r.plan.rotationOffset, 1);
+  assert.equal(currentWeek(r.plan, ws, lookup, fri).days[5].session.type, 'lower');
+  // Once a planned session is logged, the rotation is left alone.
+  const started = { ...old };
+  const w = doSession(started, currentWeek(started, ws, lookup, fri).days[5], MONDAY + 5 * DAY);
+  assert.equal(maintainPlan(started, [...ws, w], MONDAY + 5 * DAY + 7200000, lookup).plan.rotationOffset, undefined);
+});
+
+test('off-plan workouts the day before steer which session comes next', () => {
+  const plan = fresh({ ...profile, days: [0, 1, 3, 4] }, 'upper_lower', MONDAY - 7 * DAY);
+  // Upper trained off-plan Sunday... use Wednesday: next planned days Thu/Fri.
+  const ws = [offPlan('x', MONDAY + 2 * DAY, upperDay)];
+  const week = currentWeek(plan, ws, lookup, MONDAY + 3 * DAY);
+  assert.equal(week.days[3].session.type, 'lower', 'after an upper day, the next session is lower');
+});

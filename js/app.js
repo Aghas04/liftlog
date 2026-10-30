@@ -1320,7 +1320,7 @@ const todayIdx = () => (new Date().getDay() + 6) % 7;
 // Ended pauses, long breaks, spent edits. Saves only when something changed.
 function keepPlanCurrent() {
   if (!state.plan) return;
-  const r = maintainPlan(state.plan, state.workouts);
+  const r = maintainPlan(state.plan, state.workouts, Date.now(), exercise);
   if (!r.changed) return;
   state.plan = r.plan;
   save();

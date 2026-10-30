@@ -3,7 +3,7 @@
 // session into workout entries. Pure functions: they take and return plain
 // objects, the app does the saving.
 import { REGIONS, exerciseRegions, primaryRegion, allowedBy } from './data.js';
-import { buildBlock, planWeek, reviewBlock, applyReview, PLAN_DAYS, splitById } from './planner.js';
+import { buildBlock, planWeek, reviewBlock, applyReview, rotationOffsetFor, PLAN_DAYS, splitById } from './planner.js';
 import { DIRECT, weekKey } from './insights.js';
 
 const DAY = 86400000;
@@ -36,6 +36,8 @@ export function createPlan({ profile, splitId, exercises, usage, workouts, looku
     id: 'p' + now.toString(36), version: 1, profile, splitId, slots, volume: {},
     blockStart: new Date(weekKey(now)).toISOString(), blockNo: 1, blockWeeks: blockWeeksFor(profile.level),
     seed: s, createdAt: new Date(now).toISOString(),
+    // Start with the day type you're freshest for.
+    rotationOffset: rotationOffsetFor(split, workouts || [], lookup, now),
     weekDays: {}, weekEdits: {}, edits: {}, excluded: [],
     pausedUntil: null, easeWeek: null, breakHandled: null, reviewDismissed: null,
   };
@@ -59,10 +61,15 @@ export const isPaused = (plan, now = Date.now()) => !!plan?.pausedUntil && new D
  * - An ended pause clears itself; a pause of a week or more eases the next week in.
  * - A break of BREAK_DAYS without workouts eases the current week in (once per break).
  */
-export function maintainPlan(plan, workouts, now = Date.now()) {
+export function maintainPlan(plan, workouts, now = Date.now(), lookup = null) {
   if (!plan) return { plan, changed: false, events: [] };
   const next = { ...plan };
   const events = [];
+  // Plans made before the rotation picked its starting day: choose it now,
+  // as long as no planned session has been done yet.
+  if (next.rotationOffset == null && lookup && !ownWorkouts(next, workouts).some(w => w.plan)) {
+    next.rotationOffset = rotationOffsetFor(splitById(next.splitId), workouts.filter(w => w.date <= next.createdAt), lookup, new Date(next.createdAt).getTime());
+  }
   const wk = String(weekKey(now));
   if (next.pausedUntil && new Date(next.pausedUntil).getTime() <= now) {
     const pausedFor = (new Date(next.pausedUntil).getTime() - new Date(next.pausedAt || next.pausedUntil).getTime()) / DAY;
