@@ -1,12 +1,18 @@
 // All app data lives in one object saved to localStorage.
 import { EXERCISES, EQUIPMENT, DAY_TYPES, MUSCLES, CUSTOM_SPLIT } from './data.js';
+import { PLAN_DAYS } from './planner.js';
+import { isKg, defaultStepLb, stepChoices } from './units.js';
 
 const KEY = 'liftlog.v1';
 
 function emptyState() {
   return {
     version: 1,
-    settings: { defaultRest: 90, lastBackup: null, weeklyTarget: 10, accent: 'lime', standards: null, deloadUntil: null, deloadDismissed: null, ignoredRegions: [], neglectSnooze: {} },
+    settings: { defaultRest: 90, lastBackup: null, weeklyTarget: 10, accent: 'lime', standards: null, deloadUntil: null, deloadDismissed: null, ignoredRegions: [], neglectSnooze: {},
+      units: 'lb', safetyAck: null,
+      painFlags: {}, // exId -> ISO date of the 'This hurt' report; kept out of plans and suggestions
+      readinessCheck: true },
+    plan: null,           // weekly plan, see planner.js
     customExercises: [],
     exerciseSettings: {}, // exId -> { rest, increment, note }
     workouts: [],         // finished workouts, oldest first
@@ -53,6 +59,8 @@ export function replaceState(next) {
 // Splits are user-editable. Hidden splits stay so old workouts still show.
 export function dayType(id) {
   if (id === CUSTOM_SPLIT.id) return CUSTOM_SPLIT;
+  // Planned sessions save as 'plan_<type>' so history shows the plan day.
+  if (typeof id === 'string' && id.startsWith('plan_') && PLAN_DAYS[id.slice(5)]) return { id, ...PLAN_DAYS[id.slice(5)] };
   return state.splits.find(s => s.id === id)
     || DAY_TYPES.find(d => d.id === id)
     || { id, name: 'Workout', icon: '🏋️', color: '#c4f542', muscles: Object.keys(MUSCLES) };
@@ -72,8 +80,14 @@ export function exercise(id) {
   return allExercises().find(e => e.id === id) || { id, name: id, muscle: 'back', equipment: 'machine', compound: false };
 }
 
+// Weight step in stored lb. A custom step only applies in the unit it was
+// picked in (a 5 lb step would be an odd 2.27 kg), otherwise the unit's default.
 export function increment(ex) {
-  return state.exerciseSettings[ex.id]?.increment || ex.increment || EQUIPMENT[ex.equipment]?.increment || 5;
+  const units = state.settings.units || 'lb';
+  const custom = state.exerciseSettings[ex.id]?.increment;
+  if (custom && stepChoices(units).some(v => Math.abs(v - custom) < 1e-6)) return custom;
+  if (isKg(units)) return defaultStepLb(ex.equipment, units, {});
+  return ex.increment || EQUIPMENT[ex.equipment]?.increment || 5;
 }
 
 export function exSetting(exId, key) {

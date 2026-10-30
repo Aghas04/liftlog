@@ -112,7 +112,9 @@ export function longestStreak(workouts) {
   return best;
 }
 
-export function achievements(workouts, lookup, bwOn) {
+// units 'kg' swaps the weight goals for round kg numbers; ids stay the same
+// so badges already earned are kept.
+export function achievements(workouts, lookup, bwOn, units = 'lb') {
   let volume = 0, prSets = 0, early = 0, night = 0;
   const maxW = {};
   const splits = new Set();
@@ -122,7 +124,7 @@ export function achievements(workouts, lookup, bwOn) {
     const hour = new Date(w.date).getHours();
     if (hour < 7) early = 1;
     if (hour >= 21) night = 1;
-    if (w.dayType !== 'custom') splits.add(w.dayType);
+    if (w.dayType !== 'custom' && !String(w.dayType).startsWith('plan_')) splits.add(w.dayType);
     const wk = weekKey(new Date(w.date).getTime());
     perWeek[wk] = (perWeek[wk] || 0) + 1;
     for (const e of w.exercises) {
@@ -138,6 +140,8 @@ export function achievements(workouts, lookup, bwOn) {
   const streak = longestStreak(workouts);
   const bestWeek = Math.max(0, ...Object.values(perWeek));
   const w = id => maxW[id] || 0;
+  // Small slack so 100 kg typed in kg (220.462 lb stored) counts as 100 kg.
+  const kg = v => v * 2.20462 - 0.01;
   const defs = [
     ['first', '🎉', 'First workout', 'Log your first workout', total, 1],
     ['w10', '💪', '10 workouts', 'Finish 10 workouts', total, 10],
@@ -162,9 +166,27 @@ export function achievements(workouts, lookup, bwOn) {
     ['dl315', '⛓️', 'Three-plate pull', 'Deadlift 315 lb', w('deadlift'), 315],
     ['dl405', '🏆', 'Four-plate pull', 'Deadlift 405 lb', w('deadlift'), 405],
     ['ohp135', '🙌', 'Plate press', 'Overhead press 135 lb', w('overhead_press'), 135],
+  ];
+  const kgDefs = {
+    vol100k: ['50k club', 'Move 50,000 kg in total', kg(50000)],
+    vol500k: ['250k club', 'Move 250,000 kg in total', kg(250000)],
+    vol1m: ['500k club', 'Move 500,000 kg in total', kg(500000)],
+    bench135: ['60 kg bench', 'Bench press 60 kg', kg(60)],
+    bench225: ['100 kg bench', 'Bench press 100 kg', kg(100)],
+    bench315: ['140 kg bench', 'Bench press 140 kg', kg(140)],
+    squat225: ['100 kg squat', 'Squat 100 kg', kg(100)],
+    squat315: ['140 kg squat', 'Squat 140 kg', kg(140)],
+    dl315: ['140 kg pull', 'Deadlift 140 kg', kg(140)],
+    dl405: ['180 kg pull', 'Deadlift 180 kg', kg(180)],
+    ohp135: ['60 kg press', 'Overhead press 60 kg', kg(60)],
+  };
+  if (units === 'kg') {
+    for (const d of defs) if (kgDefs[d[0]]) [d[2], d[3], d[5]] = kgDefs[d[0]];
+  }
+  defs.push(
     ['early', '🌅', 'Early bird', 'Start a workout before 7 am', early, 1],
     ['night', '🌙', 'Night owl', 'Start a workout after 9 pm', night, 1],
-  ];
+  );
   return defs.map(([id, icon, name, desc, value, goal]) => ({
     id, icon, name, desc, value, goal, earned: value >= goal, progress: Math.min(1, value / goal),
   }));

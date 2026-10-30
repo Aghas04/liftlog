@@ -222,3 +222,46 @@ test('stress: 400 random lifters, every suggestion follows the safety rules', ()
   assert.ok(overshoots / suggestions <= 0.01, `${overshoots} overshoots`);
   assert.ok(deloadsWhileGaining / suggestions <= 0.005, `${deloadsWhileGaining} deloads while gaining`);
 });
+
+test('strength goal: main lifts stay in 3-6 reps and keep progressing', () => {
+  for (const seed of [1, 2, 3]) {
+    const log = [];
+    const history = [];
+    let weight = 185, reps = [5, 5, 5];
+    for (let k = 0; k < 30; k++) {
+      const now = T0 + k * 3.5 * DAY;
+      const sug = k ? suggest(squat, history, { increment: 5, now, zone: [3, 6] }) : null;
+      if (sug) {
+        assert.ok(sug.reps.every(r => r >= 1 && r <= 6), `seed ${seed} session ${k}: reps ${sug.reps}`);
+        assert.ok(sug.weight % 5 === 0, `weight ${sug.weight}`);
+        weight = sug.weight; reps = sug.reps;
+      }
+      const today = 300 * (1 + 0.005 * k) * (1 + (rng(seed * 31 + k)() - 0.5) * 0.03);
+      const sets = reps.map((t, i) => {
+        const cap = Math.max(0, Math.floor(repsAt(today, weight) - i));
+        return { weight, reps: Math.min(cap, t), done: cap > 0, target: sug ? { weight, reps: t } : null };
+      });
+      history.push({ date: new Date(now).toISOString(), sets });
+      log.push(weight);
+    }
+    assert.ok(Math.max(...log.slice(-4)) > 185, `seed ${seed}: never progressed (${log.join(',')})`);
+  }
+});
+
+test('kg weight steps: every suggestion lands on a 2.5 kg step', () => {
+  const inc = 2.5 * 2.20462;
+  const r = runScenario({ ex: squat, inc, seed: 5, strength: k => 300 * (1 + 0.005 * k), start: { weight: 40 * inc, reps: [8, 7, 6] } });
+  assert.equal(r.deloads, 0);
+  assert.ok(r.log.at(-1).weight > r.log[0].weight);
+});
+
+test('first-time calibration gives later sets sensible targets', async () => {
+  const { calibrationFrom, targetFor } = await import('../js/engine.js');
+  const cal = calibrationFrom(row, { weight: 100, reps: 10 }, 0);
+  const t1 = targetFor(cal, row, 100, 1);
+  assert.ok(t1 >= 9 && t1 <= 12, `second set target ${t1}`);
+  assert.ok(targetFor(cal, row, 120, 1) < t1, 'heavier means fewer reps');
+  assert.equal(calibrationFrom(row, { weight: 0, reps: 10 }, 0), null);
+  const strength = calibrationFrom(squat, { weight: 225, reps: 5 }, 0, [3, 6]);
+  assert.ok(targetFor(strength, squat, 185, 1) <= 6, 'strength zone caps at 6');
+});

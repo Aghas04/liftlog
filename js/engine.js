@@ -146,7 +146,7 @@ export function personalFatigueRate(pointsByLift) {
  * @param ex        exercise { equipment, compound, increment? }
  * @param history   past sessions for this exercise, oldest first:
  *                  { date: ISO, difficulty?: 'easy'|'hard'|'too_hard', sets: [...], fatigue?: number }
- * @param opts      { bodyweight?: number, now?: number, increment: number, fatigue?: number, fatigueRate?: number }
+ * @param opts      { bodyweight?: number, now?: number, increment: number, fatigue?: number, fatigueRate?: number, zone?: [min, max] }
  *                  fatigue = how tired this muscle will be at this point of today's workout
  *                  fatigueRate = the lifter's personal rate, the starting point for this lift
  * @returns null when there is no usable history, else
@@ -154,10 +154,14 @@ export function personalFatigueRate(pointsByLift) {
  */
 export function suggest(ex, history, opts) {
   const inc = opts.increment || 5;
+  // Weights stay in lb; the app passes a formatter so messages read in the user's unit.
+  const fw = opts.formatWeight || (v => `${Math.round(v * 10) / 10} lb`);
   const now = opts.now ?? Date.now();
   const isBW = ex.equipment === 'bodyweight';
   const bw = opts.bodyweight || 0;
-  const [zMin, zMax] = zoneFor(ex);
+  // opts.zone overrides the rep range (strength-goal main lifts use [3, 6]).
+  const zone = opts.zone || zoneFor(ex);
+  const [zMin, zMax] = zone;
   const hardCap = zMax + 5;
 
   const usable = history.filter(s => workingSets(s).length);
@@ -224,7 +228,7 @@ export function suggest(ex, history, opts) {
     const reps = [];
     for (let i = 0; i < n; i++) reps.push(Math.max(floor, Math.round(first - drop * i)));
     // The fatigue explanation is kept separate so the app can show it only on request.
-    return { weight: Math.max(0, weight), reps, kind, reason, fatigueNote: note, est, drop, bonus, fatigue };
+    return { weight: Math.max(0, weight), reps, kind, reason, fatigueNote: note, est, drop, bonus, fatigue, zone };
   };
 
   // Bodyweight lift with no bodyweight logged: total load is unknown, so
@@ -232,7 +236,7 @@ export function suggest(ex, history, opts) {
   if (isBW && !bw) {
     const best = Math.max(...lastSets.map(s => s.reps));
     if (best >= zMax + 3) {
-      return build(topWeight + 5, zMax - 2, 'up', `Hit ${best} reps — try adding 5 lb. Log bodyweight in Health for smarter targets.`);
+      return build(topWeight + inc, zMax - 2, 'up', `Hit ${best} reps — try adding ${fw(inc)}. Log bodyweight in Health for smarter targets.`);
     }
     return build(topWeight, best + 1, 'reps', `Beat last time by a rep (best was ${best}).`);
   }
@@ -325,15 +329,15 @@ export function suggest(ex, history, opts) {
     const done = bestRepsAt(w2);
     if (t2 <= done) t2 = Math.min(zMax, done + 1);
     if (t2 >= zMin) {
-      return build(w2, t2, 'up', `Top of the rep range last time — up to ${w2} lb.`);
+      return build(w2, t2, 'up', `Top of the rep range last time — up to ${fw(w2)}.`);
     }
     if (!isBW) {
       // Weighted lifts never go past 12, even when the next weight is a big
       // jump (small dumbbells): move up and start a little lower in the range.
-      return build(w2, Math.max(zMin - 2, t2), 'up', `Hit ${zMax} reps — up to ${w2} lb, fewer reps to start.`);
+      return build(w2, Math.max(zMin - 2, t2), 'up', `Hit ${zMax} reps — up to ${fw(w2)}, fewer reps to start.`);
     }
     if (t > hardCap) {
-      return build(w + inc, zMin, 'up', `Reps are very high — up ${inc} lb, reset to ${zMin} reps.`);
+      return build(w + inc, zMin, 'up', `Reps are very high — up ${fw(inc)}, reset to ${zMin} reps.`);
     }
     return build(w, t, 'reps', `Next weight is a big jump for this lift — add reps first.`);
   }
@@ -373,14 +377,29 @@ export function targetFor(sug, ex, weight, setIndex, bw) {
   const load = ex.equipment === 'bodyweight' ? (bw || 0) + (weight || 0) : weight || 0;
   if (load <= 0) return null;
   const reps = repsAt(sug.est, load) + (sug.bonus || 0) - (sug.drop || 0) * setIndex;
-  return Math.min(zoneFor(ex)[1], Math.max(1, Math.round(reps)));
+  return Math.min((sug.zone || zoneFor(ex))[1], Math.max(1, Math.round(reps)));
+}
+
+/**
+ * First time doing a lift: once the first working set is logged, estimate
+ * strength from it (assuming ~2 reps were left in reserve, as the guidance
+ * asks) so the remaining sets get sensible targets at that weight.
+ */
+export function calibrationFrom(ex, set, bw, zone) {
+  const load = ex.equipment === 'bodyweight' ? (bw || 0) + (set.weight || 0) : set.weight || 0;
+  if (!(load > 0) || !(set.reps > 0)) return null;
+  return {
+    weight: set.weight || 0, reps: [], kind: 'calibrate', reason: 'Based on your first set today.',
+    // bonus -1: the second set aims to match the first, later sets drop a rep each.
+    est: epley(load, set.reps + 2), drop: 1, bonus: -1, zone: zone || zoneFor(ex),
+  };
 }
 
 // Ramp-up sets before the first working set. Barbell warm-ups never go
 // below the empty bar.
-export function warmupSets(ex, workWeight, inc) {
+export function warmupSets(ex, workWeight, inc, barWeight = 45) {
   if (!(workWeight > 0)) return [];
-  const bar = ex.equipment === 'barbell' ? 45 : 0;
+  const bar = ex.equipment === 'barbell' ? barWeight : 0;
   const steps = bar && workWeight >= 95 ? [[0.4, 10], [0.6, 5], [0.8, 3]] : [[0.5, 10], [0.75, 5]];
   const out = [];
   for (const [p, reps] of steps) {

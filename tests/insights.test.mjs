@@ -76,3 +76,22 @@ test('muscle sets counts working sets by muscle', () => {
   const ws = [wk('1', 'upper', 1, [{ exId: 'bench_press', sets: sets(185, [8, 8, 8]) }, { exId: 'db_curl', sets: sets(25, [10]) }])];
   assert.deepEqual(muscleSets(ws, lookup), { chest: 3, biceps: 1 });
 });
+
+test('kg achievements use round kg goals and keep the same ids', () => {
+  // 100 kg typed in kg mode is stored as 220.462 lb.
+  const ws = [wk('1', 'upper', 2, [{ exId: 'bench_press', sets: sets(100 * 2.20462, [3]) }])];
+  const kg = Object.fromEntries(achievements(ws, lookup, bwOn, 'kg').map(x => [x.id, x]));
+  assert.ok(kg.bench225.earned, '100 kg bench earned');
+  assert.match(kg.bench225.desc, /100 kg/);
+  assert.ok(!kg.bench315.earned);
+  const lb = Object.fromEntries(achievements(ws, lookup, bwOn).map(x => [x.id, x]));
+  assert.ok(!lb.bench225.earned, '220 lb is short of 225 lb');
+  assert.deepEqual(Object.keys(kg).sort(), Object.keys(lb).sort());
+  assert.equal(Object.keys(lb).length, 25);
+});
+
+test('plan days do not count toward the five-splits badge', () => {
+  const ws = ['plan_upper', 'plan_lower', 'plan_push', 'plan_pull', 'plan_legs'].map((d, i) => wk('p' + i, d, i + 1, []));
+  const a = Object.fromEntries(achievements(ws, lookup, bwOn).map(x => [x.id, x]));
+  assert.equal(a.splits.value, 0);
+});

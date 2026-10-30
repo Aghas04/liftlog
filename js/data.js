@@ -156,7 +156,31 @@ export const EXERCISES = [
   // Adductors
   E('adductor_machine', 'Adductor Machine', 'adductors', 'machine', false, { adductors: 1 }),
   E('sumo_squat', 'Dumbbell Sumo Squat', 'adductors', 'dumbbell', true, { adductors: 0.9, vasti: 0.6, glute_max: 0.6 }),
+  // Dumbbell / bodyweight options so every region can be trained without machines
+  E('decline_db_press', 'Decline Dumbbell Press', 'chest', 'dumbbell', true, { chest_lower: 1, chest_mid: 0.5, tri_lateral: 0.4 }),
+  E('db_overhead_ext', 'Dumbbell Overhead Extension', 'triceps', 'dumbbell', false, { tri_long: 1, tri_lateral: 0.4 }),
+  E('sissy_squat', 'Sissy Squat', 'quads', 'bodyweight', false, { rectus_femoris: 1, vasti: 0.6 }),
+  E('nordic_curl', 'Nordic Hamstring Curl', 'hamstrings', 'bodyweight', false, { ham_curl: 1 }),
+  E('side_lying_leg_raise', 'Side-Lying Leg Raise', 'glutes', 'bodyweight', false, { glute_med: 1 }),
+  E('db_calf_raise', 'Single-Leg Dumbbell Calf Raise', 'calves', 'dumbbell', false, { gastrocnemius: 1, soleus: 0.4 }),
+  E('db_seated_calf_raise', 'Seated Dumbbell Calf Raise', 'calves', 'dumbbell', false, { soleus: 1, gastrocnemius: 0.3 }),
+  E('db_side_bend', 'Dumbbell Side Bend', 'abs', 'dumbbell', false, { obliques: 1 }),
+  E('chest_supported_row', 'Chest-Supported Dumbbell Row', 'back', 'dumbbell', true, { upper_back: 1, lats: 0.5, delt_rear: 0.4, brachialis: 0.2 }),
+  E('db_hip_thrust', 'Dumbbell Hip Thrust', 'glutes', 'dumbbell', true, { glute_max: 1, ham_hinge: 0.3, glute_med: 0.2 }),
 ];
+
+// Very demanding movements: only picked by plans for advanced lifters, or
+// when nothing else trains that region with the available equipment.
+for (const id of ['nordic_curl', 'sissy_squat']) EXERCISES.find(e => e.id === id).hard = true;
+
+// What equipment each setup choice allows.
+export const EQUIPMENT_PROFILES = {
+  gym: { name: 'Full gym', allows: ['barbell', 'dumbbell', 'cable', 'machine', 'bodyweight'] },
+  free: { name: 'Barbell, dumbbells & bodyweight', allows: ['barbell', 'dumbbell', 'bodyweight'] },
+  dumbbells: { name: 'Dumbbells & bodyweight', allows: ['dumbbell', 'bodyweight'] },
+};
+
+export const allowedBy = (profileId, ex) => (EQUIPMENT_PROFILES[profileId] || EQUIPMENT_PROFILES.gym).allows.includes(ex.equipment);
 
 export const regionsOf = muscle => Object.keys(REGIONS).filter(r => REGIONS[r].muscle === muscle);
 

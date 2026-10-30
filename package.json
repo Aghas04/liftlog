@@ -2,5 +2,5 @@
   "name": "liftlog",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test tests/engine.test.mjs tests/insights.test.mjs tests/healthimport.test.mjs tests/simulate.test.mjs tests/regions.test.mjs tests/builder.test.mjs" }
+  "scripts": { "test": "node --test tests/engine.test.mjs tests/insights.test.mjs tests/healthimport.test.mjs tests/simulate.test.mjs tests/regions.test.mjs tests/builder.test.mjs tests/planner.test.mjs tests/plancontrol.test.mjs tests/shell.test.mjs" }
 }

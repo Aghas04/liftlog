@@ -212,3 +212,28 @@ test('suggest uses the personal rate for a lift with no varied history', () => {
   const fast = suggest(curl, h, { increment: 5, now: NOW, fatigue: 10, fatigueRate: 0.025 });
   assert.ok(slow.est > fast.est, 'someone who tires slowly gets a smaller cut');
 });
+
+test('messages use the formatter the app passes (kg mode)', () => {
+  const kgInc = 2.5 * 2.20462;
+  const s = suggest(row, [{ date: daysAgo(3), sets: sets(50 * 2.20462, [12, 12, 12]) }], {
+    increment: kgInc, now: NOW, formatWeight: v => `${Math.round(v / 2.20462 * 100) / 100} kg`,
+  });
+  assert.equal(s.kind, 'up');
+  assert.match(s.reason, /kg/);
+  assert.doesNotMatch(s.reason, /lb/);
+  // New weight is a whole number of kg steps above the old one.
+  const steps = (s.weight - 50 * 2.20462) / kgInc;
+  assert.ok(Math.abs(steps - Math.round(steps)) < 1e-6 && steps >= 1);
+});
+
+test('default messages still read in lb', () => {
+  const s = suggest(row, [{ date: daysAgo(3), sets: sets(120, [12, 12, 12]) }], { increment: 5, now: NOW });
+  assert.match(s.reason, /\d+ lb/);
+});
+
+test('warm-ups use a 20 kg bar in kg mode', async () => {
+  const { warmupSets } = await import('../js/engine.js');
+  const bar = 20 * 2.20462;
+  const w = warmupSets({ equipment: 'barbell' }, 100 * 2.20462, 2.5 * 2.20462, bar);
+  assert.ok(w.length && w.every(s => s.weight >= bar - 1e-9 && s.weight < 100 * 2.20462));
+});
