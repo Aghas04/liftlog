@@ -565,3 +565,9 @@ label.btn { cursor: pointer; }
 .why-more summary::after { content: ' ›'; }
 .why-more[open] summary::after { content: ' ⌄'; }
 .why-more p { margin: 4px 0 0; color: var(--muted); }
+
+/* One rep short of the goal: a normal attempt, shown softer than a miss. */
+.set-row.done.near .check { background: var(--warn); color: #3a2700; box-shadow: 0 0 14px -2px var(--warn); }
+.set-row.done.near .set-num { color: var(--warn); }
+.set-row.done.near .reps input { color: var(--warn); }
+.set-row.near .goal { color: var(--warn); }

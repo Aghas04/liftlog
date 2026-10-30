@@ -244,7 +244,9 @@ function suggestionFor(ex, fatigue = 0) {
   let sug = suggest(ex, historyFor(ex.id), { increment: increment(ex), bodyweight: bodyweightOn(), fatigue, fatigueRate: personalRate().rate });
   if (sug && inDeload()) {
     const inc = increment(ex);
-    sug = { ...sug, weight: Math.max(0, Math.round((sug.weight * 0.85) / inc) * inc), est: 0, kind: 'deload', reason: 'Deload week — about 15% lighter so you recover and come back stronger.' };
+    // 'deloadWeek' (not 'deload'): only these sessions get excluded from future
+    // estimates. A lighter session after missed targets still counts normally.
+    sug = { ...sug, weight: Math.max(0, Math.round((sug.weight * 0.85) / inc) * inc), est: 0, kind: 'deloadWeek', reason: 'Deload week — about 15% lighter so you recover and come back stronger.' };
   }
   return sug;
 }
@@ -285,7 +287,7 @@ function finishWorkout() {
     .map(e => ({
       exId: e.exId,
       difficulty: e.difficulty,
-      ...(e.suggestion?.kind === 'deload' ? { deload: true } : {}),
+      ...(e.suggestion?.kind === 'deloadWeek' ? { deload: true } : {}),
       ...(e.group ? { group: e.group } : {}),
       sets: e.sets.filter(s => s.done && s.reps > 0).map(({ weight, reps, target, warmup, pr }) => ({ weight: weight || 0, reps, target, warmup: !!warmup, done: true, ...(pr ? { pr: true } : {}) })),
     }))
@@ -463,11 +465,21 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ---------- Rendering: exercise card ----------
+// How a finished set compares to its goal. One short is a normal attempt at
+// "one more rep than last time"; two or more short is a miss (same rule the
+// suggestion engine uses).
+function setStatus(s) {
+  if (!s.done || !s.target || s.reps == null) return '';
+  if (s.reps <= s.target.reps - 2) return 'miss';
+  if (s.reps === s.target.reps - 1) return 'near';
+  return '';
+}
+
 function setRow(ctx, ei, si, e, ex, s, live) {
-  const miss = s.done && s.target && s.reps != null && s.reps < s.target.reps;
+  const status = setStatus(s);
   const bw = isBW(ex);
   return `
-  <div class="set-row ${s.done ? 'done' : ''} ${miss ? 'miss' : ''} ${s.done && s.pr ? 'pr' : ''}" data-w="${ctx}" data-e="${ei}" data-s="${si}">
+  <div class="set-row ${s.done ? 'done' : ''} ${status} ${s.done && s.pr ? 'pr' : ''}" data-w="${ctx}" data-e="${ei}" data-s="${si}">
     <button class="set-num ${s.warmup ? 'warm' : ''}" data-act="warmup" aria-label="Toggle warm-up">${s.warmup ? 'W' : si + 1 - e.sets.slice(0, si).filter(x => x.warmup).length}</button>
     <div class="stepper">
       <button data-act="step" data-f="weight" data-d="-1" aria-label="Less weight">−</button>
@@ -485,10 +497,10 @@ function setRow(ctx, ei, si, e, ex, s, live) {
 }
 
 function goalText(s) {
-  const miss = s.done && s.target && s.reps != null && s.reps < s.target.reps;
+  const status = setStatus(s);
   const parts = [];
   if (s.done && s.pr) parts.push('🏆 New PR');
-  if (s.target) parts.push(miss ? `missed · goal ${s.target.reps}` : `goal ${s.target.reps}`);
+  if (s.target) parts.push(status === 'miss' ? `missed · goal ${s.target.reps}` : status === 'near' ? `1 short · goal ${s.target.reps}` : `goal ${s.target.reps}`);
   return parts.join(' · ');
 }
 
@@ -2068,8 +2080,9 @@ document.addEventListener('input', ev => {
 // Update a row's goal/miss state in place. Replacing the row here would
 // steal focus from the input the user is moving to.
 function syncRow(row, s) {
-  const miss = s.done && s.target && s.reps != null && s.reps < s.target.reps;
-  row.classList.toggle('miss', !!miss);
+  const status = setStatus(s);
+  row.classList.toggle('miss', status === 'miss');
+  row.classList.toggle('near', status === 'near');
   const reps = row.querySelector('[data-field="reps"]');
   reps.placeholder = s.target ? s.target.reps : 'reps';
   let goal = row.querySelector('.goal');

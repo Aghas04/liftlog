@@ -13,18 +13,25 @@ export const repsAt = (e1rm, load) => (load > 0 ? 30 * (e1rm / load - 1) : 0);
 const roundTo = (x, inc) => Math.round(x / inc) * inc;
 const floorTo = (x, inc) => Math.floor(x / inc) * inc;
 
+// Weighted lifts never go past 12 reps: at that point the weight goes up.
+// Only bodyweight lifts (push-ups, pull-ups, dips, sit-ups) go higher.
+export const MAX_REPS = 12;
 export function zoneFor(ex) {
-  return ex.compound ? [6, 12] : [8, 15];
+  if (ex.equipment === 'bodyweight') return [6, 20];
+  return ex.compound ? [6, MAX_REPS] : [8, MAX_REPS];
 }
 
 export function workingSets(session) {
   return (session.sets || []).filter(s => s.done && !s.warmup && s.reps > 0);
 }
 
+// Targets ask for one rep beyond what you've shown you can do, so falling
+// one short is a normal attempt, not a miss. A set counts as missed when it's
+// 2+ reps short of its target.
 export function sessionMissed(session) {
   const sets = workingSets(session).filter(s => s.target && s.target.reps > 0);
   if (!sets.length) return false;
-  const missed = sets.filter(s => s.reps < s.target.reps && s.weight >= (s.target.weight ?? 0)).length;
+  const missed = sets.filter(s => s.reps <= s.target.reps - 2 && s.weight >= (s.target.weight ?? 0)).length;
   return missed >= Math.ceil(sets.length / 2);
 }
 
@@ -158,31 +165,76 @@ export function suggest(ex, history, opts) {
   // Deload sessions are deliberately light; ignore them unless that's all there is.
   const valid = usable.some(s => !s.deload) ? usable.filter(s => !s.deload) : usable;
   const lastDate = usable[usable.length - 1].date;
-  const last = valid[valid.length - 1];
+  // Compare like with like: if this lift was done recently at a similar point
+  // in a workout (similar fatigue), that session is the baseline. The fatigue
+  // model only has to bridge the gap when there's no similar session.
+  const fNow = opts.fatigue || 0;
+  const isSimilar = x => Math.abs((x.fatigue || 0) - fNow) <= 3;
+  const last = [...valid.slice(-4)].reverse().find(isSimilar) || valid[valid.length - 1];
   const lastSets = workingSets(last);
   const topWeight = Math.max(...lastSets.map(s => s.weight || 0));
-  const n = Math.min(8, Math.max(1, lastSets.length));
+  // No weight was entered (only bodyweight lifts can be done at 0 lb).
+  if (!isBW && !(topWeight > 0)) return null;
+  // Plan your usual number of sets, so one short day doesn't stick.
+  const n = Math.min(8, Math.max(1, ...valid.slice(-3).map(s => workingSets(s).length)));
   const drop = fatigueDrop(lastSets);
   const loadOf = w => (isBW ? bw + w : w);
   let est = 0;
   let note = '';
   let fatigue = null;
 
+  // Most reps done in one set at `weight` or heavier in recent sessions —
+  // sessions at a similar point in a workout when there are any, since a
+  // fresh-day 12 doesn't prove a tired day can handle the next weight.
+  const bestRepsAt = weight => {
+    const recent = valid.slice(-6);
+    const peers = recent.filter(isSimilar);
+    let best = 0;
+    for (const s of peers.length ? peers : recent) for (const x of workingSets(s)) if ((x.weight || 0) >= weight) best = Math.max(best, x.reps);
+    return best;
+  };
+
+  // Most reps done at `weight` or heavier the last time this lift was done at
+  // a similar point in a workout (similar fatigue), or 0 if none.
+  const similarSession = () => [...valid].reverse().find(isSimilar) || null;
+  // Most reps at `weight` or heavier in that similar session.
+  const similarBest = weight => {
+    const sim = similarSession();
+    return sim ? Math.max(0, ...workingSets(sim).filter(x => (x.weight || 0) >= weight).map(x => x.reps)) : 0;
+  };
+  // Like similarBest, but only from sets that fell short of their target:
+  // the most you actually managed when the target was too much.
+  const similarShortfall = weight => {
+    const sim = similarSession();
+    if (!sim) return 0;
+    const short = workingSets(sim).filter(x => (x.weight || 0) >= weight && x.target && x.reps < x.target.reps);
+    return short.length ? Math.max(...short.map(x => x.reps)) : 0;
+  };
+
   // bonus: reps asked for beyond the estimate (1 when progressing by reps).
   const build = (weight, first, kind, reason, bonus = 0) => {
+    // Safety cap: if you fell short at this weight last time you were this
+    // fresh/tired, ask for at most one rep more than you managed (two if you
+    // rated it Easy). Hitting every target means there's nothing to cap.
+    const seen = similarShortfall(weight);
+    const room = similarSession()?.difficulty === 'easy' ? 2 : 1;
+    if (seen > 0 && first > seen + room) first = seen + room;
+    // Later sets follow your usual drop-off, but never collapse to 1-2 reps.
+    const floor = Math.max(1, Math.min(first, zMin - 2));
     const reps = [];
-    for (let i = 0; i < n; i++) reps.push(Math.max(1, Math.round(first - drop * i)));
+    for (let i = 0; i < n; i++) reps.push(Math.max(floor, Math.round(first - drop * i)));
     // The fatigue explanation is kept separate so the app can show it only on request.
     return { weight: Math.max(0, weight), reps, kind, reason, fatigueNote: note, est, drop, bonus, fatigue };
   };
 
-  // Bodyweight lift with no bodyweight logged: progress reps only.
-  if (isBW && !bw && topWeight === 0) {
+  // Bodyweight lift with no bodyweight logged: total load is unknown, so
+  // progress reps at the same added weight.
+  if (isBW && !bw) {
     const best = Math.max(...lastSets.map(s => s.reps));
     if (best >= zMax + 3) {
-      return build(5, zMax - 2, 'up', `Hit ${best} reps — try adding 5 lb. Log bodyweight in Health for smarter targets.`);
+      return build(topWeight + 5, zMax - 2, 'up', `Hit ${best} reps — try adding 5 lb. Log bodyweight in Health for smarter targets.`);
     }
-    return build(0, best + 1, 'reps', `Beat last time by a rep (best was ${best}).`);
+    return build(topWeight, best + 1, 'reps', `Beat last time by a rep (best was ${best}).`);
   }
 
   // Convert each past session to a "fresh" strength by undoing how tired the
@@ -195,10 +247,21 @@ export function suggest(ex, history, opts) {
   // Strength estimate. A better session counts in full; a worse one is
   // softened by the session before so one bad day doesn't overreact.
   est = fresh(last);
-  if (valid.length >= 2) {
-    const prev = fresh(valid[valid.length - 2]);
+  // The session before the baseline, preferring one at a similar point too.
+  const before = valid.slice(0, valid.indexOf(last));
+  const prevSession = [...before].reverse().find(isSimilar) || before[before.length - 1];
+  if (prevSession) {
+    const prev = fresh(prevSession);
     if (prev > est) est = 0.75 * est + 0.25 * prev;
   }
+  // One weaker session can't pull the estimate far below what you showed
+  // recently (at a similar point in the workout when there's history for it).
+  const peers = valid.slice(-6).filter(isSimilar);
+  const pool = peers.length ? peers.slice(-2) : valid.slice(-3);
+  est = Math.max(est, 0.95 * Math.max(...pool.map(fresh)));
+  // And a looser floor from any recent session, so one disastrous day at
+  // this position can't start a downward spiral.
+  est = Math.max(est, 0.9 * Math.max(...valid.slice(-3).map(fresh)));
   if (last.difficulty === 'easy') est *= 1.025;
   if (last.difficulty === 'too_hard') est *= 0.975;
 
@@ -218,10 +281,18 @@ export function suggest(ex, history, opts) {
     return build(w, t, 'break', `${Math.round(gapDays)} days since last time — easing back in.`);
   }
 
-  // Two missed sessions in a row -> deload.
+  // Two missed sessions in a row -> deload. A session only counts when your
+  // actual strength also dropped (below 97% of the best of the 3 sessions
+  // before it) — an ambitious target on a normal day isn't a reason to back
+  // off. Only sessions after the latest deload week count.
+  const lastDeload = [...usable].reverse().find(s => s.deload)?.date || '';
+  const weaker = i => {
+    const before = valid.slice(Math.max(0, i - 3), i).map(fresh);
+    return !before.length || fresh(valid[i]) < 0.97 * Math.max(...before);
+  };
   const missedStreak = (() => {
     let c = 0;
-    for (let i = valid.length - 1; i >= 0 && sessionMissed(valid[i]); i--) c++;
+    for (let i = valid.length - 1; i >= 0 && valid[i].date > lastDeload && sessionMissed(valid[i]) && weaker(i); i--) c++;
     return c;
   })();
   if (missedStreak >= 2 && topWeight > 0) {
@@ -234,15 +305,32 @@ export function suggest(ex, history, opts) {
   let t = Math.round(repsAt(est, loadOf(w))) + 1;
 
   if (t > zMax) {
-    // Move up in weight until reps fall back inside the zone.
+    // Move up in weight until reps fall back inside the zone, but never more
+    // than ~10% in one session (at least one step).
+    const maxW = Math.max(w + inc, floorTo(w * 1.1, inc));
     let w2 = w;
     let t2 = t;
-    while (t2 > zMax) {
+    while (t2 > zMax && w2 + inc <= maxW + 1e-9) {
       w2 += inc;
       t2 = Math.round(repsAt(est, loadOf(w2)));
     }
+    if (!isBW) {
+      // Double progression: never suggest a weight you've already done 12
+      // reps with recently — go a step past it.
+      while (bestRepsAt(w2) >= zMax) w2 += inc;
+      t2 = Math.round(repsAt(est, loadOf(w2)));
+    }
+    t2 = Math.min(zMax, t2);
+    // Already done these reps at this weight recently? Ask for one more.
+    const done = bestRepsAt(w2);
+    if (t2 <= done) t2 = Math.min(zMax, done + 1);
     if (t2 >= zMin) {
-      return build(w2, t2, 'up', `Top of the rep range last time — up ${w2 - w} lb.`);
+      return build(w2, t2, 'up', `Top of the rep range last time — up to ${w2} lb.`);
+    }
+    if (!isBW) {
+      // Weighted lifts never go past 12, even when the next weight is a big
+      // jump (small dumbbells): move up and start a little lower in the range.
+      return build(w2, Math.max(zMin - 2, t2), 'up', `Hit ${zMax} reps — up to ${w2} lb, fewer reps to start.`);
     }
     if (t > hardCap) {
       return build(w + inc, zMin, 'up', `Reps are very high — up ${inc} lb, reset to ${zMin} reps.`);
@@ -255,11 +343,17 @@ export function suggest(ex, history, opts) {
     let w2 = w;
     let t2 = t;
     while (t2 < zMin && w2 - inc > 0) {
+      // Don't drop to a weight you've already done 12 reps with — that's too
+      // easy to grow from. Stay heavier with slightly fewer reps instead.
+      // Only when the heavier weight is still achievable, and the 12 reps were
+      // done at a similar point in a workout (a fresh-day 12 doesn't count).
+      if (!isBW && t2 >= zMin - 2 && similarBest(w2 - inc) >= zMax) break;
       w2 -= inc;
-      t2 = Math.round(repsAt(est, loadOf(w2)));
+      t2 = Math.round(repsAt(est, loadOf(w2))) + 1;
     }
     if (w2 !== w) {
-      return build(w2, Math.min(zMax, Math.max(zMin, t2)), 'down', `Below ${zMin} reps — lighter so you can work in the growth range.`);
+      // Still one rep beyond the estimate, so lighter days keep progressing too.
+      return build(w2, Math.min(zMax, Math.max(zMin, t2)), 'down', `Below ${zMin} reps — lighter so you can work in the growth range.`, 1);
     }
   }
 
@@ -279,7 +373,7 @@ export function targetFor(sug, ex, weight, setIndex, bw) {
   const load = ex.equipment === 'bodyweight' ? (bw || 0) + (weight || 0) : weight || 0;
   if (load <= 0) return null;
   const reps = repsAt(sug.est, load) + (sug.bonus || 0) - (sug.drop || 0) * setIndex;
-  return Math.max(1, Math.round(reps));
+  return Math.min(zoneFor(ex)[1], Math.max(1, Math.round(reps)));
 }
 
 // Ramp-up sets before the first working set. Barbell warm-ups never go

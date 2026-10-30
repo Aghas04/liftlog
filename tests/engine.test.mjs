@@ -30,9 +30,18 @@ test('top of the zone: weight goes up and reps reset into the zone', () => {
   assert.ok(s.reps[0] >= 6 && s.reps[0] <= 12);
 });
 
-test('small isolation lift: adds reps when a 5 lb jump is too big', () => {
-  const s = suggest(curl, [{ date: daysAgo(3), sets: sets(15, [15, 15]) }], { increment: 5, now: NOW });
-  assert.equal(s.weight, 15);
+test('weighted lifts never go past 12 reps, even when the next weight is a big jump', () => {
+  const s = suggest(curl, [{ date: daysAgo(3), sets: sets(15, [12, 12]) }], { increment: 5, now: NOW });
+  assert.equal(s.weight, 20);
+  assert.ok(s.reps.every(r => r <= 12));
+  // Going lighter mid-workout can't push the goal past 12 either.
+  assert.ok(targetFor(s, curl, 5, 0) <= 12);
+});
+
+test('bodyweight lifts may go past 12 reps', () => {
+  const pushup = { equipment: 'bodyweight', compound: true };
+  const s = suggest(pushup, [{ date: daysAgo(3), sets: sets(0, [15, 14]) }], { increment: 5, now: NOW });
+  assert.equal(s.weight, 0);
   assert.equal(s.reps[0], 16);
 });
 
@@ -43,10 +52,16 @@ test('missing targets lowers the next target', () => {
   assert.equal(miss.kind, 'hold');
 });
 
+test('missing by just one rep is not a miss', () => {
+  assert.equal(sessionMissed({ sets: sets(150, [8, 7, 6], [9, 8, 7]) }), false);
+  assert.equal(sessionMissed({ sets: sets(150, [7, 6, 6], [9, 8, 7]) }), true);
+});
+
 test('two missed sessions in a row deloads about 10%', () => {
   const h = [
-    { date: daysAgo(7), sets: sets(150, [7, 6, 5], [9, 8, 7]) },
-    { date: daysAgo(3), sets: sets(150, [6, 6, 5], [8, 7, 6]) },
+    { date: daysAgo(11), sets: sets(150, [9, 8, 7], [9, 8, 7]) },
+    { date: daysAgo(7), sets: sets(150, [7, 6, 5], [10, 9, 8]) },
+    { date: daysAgo(3), sets: sets(150, [6, 5, 4], [8, 7, 6]) },
   ];
   assert.ok(sessionMissed(h[1]));
   const s = suggest(row, h, { increment: 5, now: NOW });
@@ -74,7 +89,11 @@ test('bodyweight lift without bodyweight logged progresses reps', () => {
 });
 
 test('bodyweight lift with bodyweight logged uses total load', () => {
-  const s = suggest(dips, [{ date: daysAgo(3), sets: sets(0, [12, 12, 12]) }], { increment: 5, now: NOW, bodyweight: 180 });
+  // Bodyweight lifts climb to 20 reps before adding weight.
+  const more = suggest(dips, [{ date: daysAgo(3), sets: sets(0, [12, 12, 12]) }], { increment: 5, now: NOW, bodyweight: 180 });
+  assert.equal(more.weight, 0);
+  assert.equal(more.reps[0], 13);
+  const s = suggest(dips, [{ date: daysAgo(3), sets: sets(0, [20, 20, 20]) }], { increment: 5, now: NOW, bodyweight: 180 });
   assert.equal(s.kind, 'up');
   assert.ok(s.weight >= 5, 'suggests added weight');
 });
