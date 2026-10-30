@@ -1,5 +1,5 @@
 // All app data lives in one object saved to localStorage.
-import { EXERCISES, EQUIPMENT } from './data.js';
+import { EXERCISES, EQUIPMENT, DAY_TYPES, MUSCLES } from './data.js';
 
 const KEY = 'liftlog.v1';
 
@@ -14,6 +14,8 @@ function emptyState() {
     bodyweight: [],       // { id, date: 'YYYY-MM-DD', lb }
     measurements: [],     // { id, date: 'YYYY-MM-DD', kind, value }
     achievements: {},     // achievement id -> ISO date earned
+    splits: DAY_TYPES.map(d => ({ ...d, muscles: [...d.muscles] })), // { id, name, icon, color, muscles, hidden? }
+    templates: [],        // { id, splitId, name, exercises: [{ exId, group? }] }
   };
 }
 
@@ -46,6 +48,17 @@ export function save() {
 export function replaceState(next) {
   state = withDefaults(next);
   save();
+}
+
+// Splits are user-editable. Hidden splits stay so old workouts still show.
+export function dayType(id) {
+  return state.splits.find(s => s.id === id)
+    || DAY_TYPES.find(d => d.id === id)
+    || { id, name: 'Workout', icon: '🏋️', color: '#c4f542', muscles: Object.keys(MUSCLES) };
+}
+
+export function visibleSplits() {
+  return state.splits.filter(s => !s.hidden);
 }
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);

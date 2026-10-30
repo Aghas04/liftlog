@@ -1,6 +1,7 @@
-import { DAY_TYPES, MUSCLES, EQUIPMENT, dayType } from './data.js';
+import { MUSCLES, EQUIPMENT } from './data.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
+  dayType, visibleSplits,
 } from './store.js';
 import { suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor } from './engine.js';
 import { recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets } from './insights.js';
@@ -147,9 +148,18 @@ function setsSummary(ex, sets) {
 const FEEL = { easy: 'Easy', hard: 'Hard', too_hard: 'Too hard' };
 
 // ---------- Workout actions ----------
-function startWorkout(dayId, repeatFrom) {
-  state.activeWorkout = { id: uid(), dayType: dayId, startedAt: new Date().toISOString(), exercises: [], timer: null };
-  if (repeatFrom) for (const e of repeatFrom.exercises) addExercise(e.exId, false);
+// `from` is a past workout or a template: its exercises (and supersets) are copied in order.
+function startWorkout(dayId, from, template) {
+  state.activeWorkout = {
+    id: uid(), dayType: dayId, startedAt: new Date().toISOString(), exercises: [], timer: null,
+    ...(template ? { templateId: template.id, templateName: template.name } : {}),
+  };
+  const groups = {};
+  for (const e of from?.exercises || []) {
+    const entry = buildEntry(e.exId);
+    if (e.group) entry.group = groups[e.group] ||= uid();
+    state.activeWorkout.exercises.push(entry);
+  }
   save();
   requestWakeLock();
   closeSheet();
@@ -211,10 +221,14 @@ function finishWorkout() {
       exId: e.exId,
       difficulty: e.difficulty,
       ...(e.suggestion?.kind === 'deload' ? { deload: true } : {}),
+      ...(e.group ? { group: e.group } : {}),
       sets: e.sets.filter(s => s.done && s.reps > 0).map(({ weight, reps, target, warmup, pr }) => ({ weight: weight || 0, reps, target, warmup: !!warmup, done: true, ...(pr ? { pr: true } : {}) })),
     }))
     .filter(e => e.sets.length);
-  const saved = { id: w.id, dayType: w.dayType, date: w.startedAt, finishedAt: new Date().toISOString(), exercises };
+  const saved = {
+    id: w.id, dayType: w.dayType, date: w.startedAt, finishedAt: new Date().toISOString(), exercises,
+    ...(w.templateId ? { templateId: w.templateId, templateName: w.templateName } : {}),
+  };
   state.workouts.push(saved);
   state.workouts.sort((a, b) => a.date.localeCompare(b.date));
   state.activeWorkout = null;
@@ -543,7 +557,7 @@ function viewWorkout() {
       <div class="workout-head">
         <div class="top">
           <div class="wh-title"><span class="day-ico sm">${dt.icon}</span>
-            <div><h1>${esc(dt.name)}</h1><div class="sub"><span id="elapsed">0 min</span> · <span id="setCount">${done}/${total} sets</span></div></div></div>
+            <div><h1>${esc(dt.name)}</h1><div class="sub">${w.templateName ? `<span class="tpl-tag">${esc(w.templateName)}</span> ` : ''}<span id="elapsed">0 min</span> · <span id="setCount">${done}/${total} sets</span></div></div></div>
           <button class="finish-btn" data-act="finishSheet">Finish</button>
         </div>
         <div class="prog" id="setProg"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
@@ -551,6 +565,7 @@ function viewWorkout() {
       ${w.exercises.map((_, i) => exCard(w, 'active', i, true)).join('')}
       ${w.exercises.length ? '' : `<div class="empty"><div class="big-ico">${dt.icon}</div>Add your first exercise to get started.</div>`}
       <button class="btn primary day" data-act="picker">+ Add exercise</button>
+      ${w.exercises.length ? `<button class="btn ghost" style="margin-top:10px" data-act="saveTplSheet">💾 Save as template</button>` : ''}
     </div>`;
   }
 
@@ -567,7 +582,8 @@ function viewWorkout() {
     const t = startOfDay(monday + i * DAY + 3600000);
     return `<div class="wd ${days.has(t) ? 'on' : ''} ${t === today ? 'today' : ''}"><span>${l}</span><i></i></div>`;
   }).join('');
-  const pick = recommendSplit(state.workouts, exercise, DAY_TYPES);
+  const splits = visibleSplits();
+  const pick = splits.length ? recommendSplit(state.workouts, exercise, splits) : null;
   const pickHtml = !pick ? '' : pick.rest
     ? `<div class="pick-card rest"><span class="day-ico">😴</span><div class="pick-txt"><small>Today</small><b>Rest day</b><span>${esc(pick.reason)}</span></div></div>`
     : `<button class="pick-card" style="--c:${pick.day.color}" data-act="start" data-day="${pick.day.id}">
@@ -590,15 +606,17 @@ function viewWorkout() {
   ${needsBackup ? `<div class="banner"><div>It's been a while since your last backup.</div><button data-act="export">Back up</button></div>` : ''}
   ${deloadBanner()}
   ${pickHtml}
-  <div class="section-title">${pick?.day ? 'Or pick any split' : 'Pick today’s split'}</div>
+  <div class="section-title row-title"><span>${pick?.day ? 'Or pick any split' : 'Pick today’s split'}</span><button data-act="splitsSheet">Edit splits</button></div>
   <div class="days">
-    ${DAY_TYPES.map(d => {
+    ${splits.length ? '' : `<button class="btn ghost" data-act="splitEdit">+ Add your first split</button>`}
+    ${splits.map(d => {
       const l = lastOf(d.id);
+      const n = state.templates.filter(t => t.splitId === d.id).length;
       return `<button class="day-btn ${pick?.day?.id === d.id ? 'suggested' : ''}" style="--c:${d.color}" data-act="start" data-day="${d.id}">
         <span class="day-ico">${d.icon}</span>
         <div class="day-txt"><strong>${esc(d.name)}</strong>
           <span class="muscles">${d.muscles.map(m => MUSCLES[m]).join(' · ')}</span>
-          <span class="when">${l ? `Last done ${relDays(l.date)}` : 'Not done yet'}</span></div>
+          <span class="when">${l ? `Last done ${relDays(l.date)}` : 'Not done yet'}${n ? ` · ${n} template${n > 1 ? 's' : ''}` : ''}</span></div>
         <span class="go">${ICON.arrow}</span></button>`;
     }).join('')}
   </div>`;
@@ -654,7 +672,7 @@ function viewHistory() {
     return `${head}<button class="card hist" style="--c:${dt?.color}" data-act="openWorkout" data-id="${w.id}">
       <span class="day-ico sm">${dt?.icon || ''}</span>
       <div class="hist-txt">
-        <div class="top-line"><strong>${esc(dt?.name)}</strong><span class="muted small">${fmtDate(w.date)}</span></div>
+        <div class="top-line"><strong>${esc(dt?.name)}${w.templateName ? ` <span class="tpl-tag">${esc(w.templateName)}</span>` : ''}</strong><span class="muted small">${fmtDate(w.date)}</span></div>
         <div class="ex-names">${w.exercises.length} exercises · ${sets} sets · ${esc(w.exercises.map(e => exercise(e.exId).name).join(', '))}</div>
       </div>
     </button>`;
@@ -1016,6 +1034,15 @@ function render(animate = false) {
 
 // ---------- Sheets ----------
 function openSheet(s) { ui.sheet = s; renderSheet(); }
+
+// Return to the sheet a sub-editor was opened from.
+function reopenSheet(back) {
+  if (!back) { closeSheet(); return; }
+  if (back.type === 'splitEdit') {
+    const sp = state.splits.find(x => x.id === back.id);
+    openSheet({ type: 'splitEdit', id: back.id, draft: { name: sp.name, icon: sp.icon, color: sp.color, muscles: [...sp.muscles] } });
+  } else openSheet(back);
+}
 function closeSheet() { ui.sheet = null; renderSheet(); }
 
 function pickerList(query) {
@@ -1040,17 +1067,107 @@ function pickerList(query) {
   }).join('');
 }
 
+const SPLIT_ICONS = ['💪', '🦵', '🏋️', '🔥', '⚡', '🎯', '🦍', '🚀', '🧱', '🏃', '🤸', '⭐'];
+const SPLIT_COLORS = ['#9b8cff', '#ff9447', '#3ed4ff', '#ff5f9e', '#c4f542', '#ffc24b', '#5ee0a0', '#ff5f6d'];
+
+const lastWorkoutOf = id => [...state.workouts].sort((a, b) => b.date.localeCompare(a.date)).find(w => w.dayType === id);
+function tplCount(splitId) {
+  const n = state.templates.filter(t => t.splitId === splitId).length;
+  return n ? `${n} template${n > 1 ? 's' : ''}` : 'No templates';
+}
+// Template exercises from a workout, keeping order and supersets.
+const tplExercises = w => w.exercises.map(e => ({ exId: e.exId, ...(e.group ? { group: e.group } : {}) }));
+
 function sheetHtml() {
   const s = ui.sheet;
   switch (s.type) {
-    case 'repeat': {
-      const last = s.last;
-      return `<h2>${esc(dayType(s.day).name)}</h2>
-        <p class="muted">Last time (${relDays(last.date)}): ${esc(last.exercises.map(e => exercise(e.exId).name).join(', '))}</p>
-        <div class="stack">
-          <button class="btn primary" data-act="startRepeat">Repeat with new targets</button>
+    case 'start': {
+      const sp = dayType(s.day);
+      const tpls = state.templates.filter(t => t.splitId === s.day);
+      const last = lastWorkoutOf(s.day);
+      return `<h2>${sp.icon} ${esc(sp.name)}</h2>
+        ${tpls.length
+          ? `<div class="tpl-list">${tpls.map(t => `
+            <div class="tpl" style="--c:${sp.color}">
+              <button class="tpl-main" data-act="startTemplate" data-id="${t.id}"><b>${esc(t.name)}</b><small>${t.exercises.length} exercises · ${esc(t.exercises.map(e => exercise(e.exId).name).join(', '))}</small></button>
+              <button class="tpl-edit" data-act="tplEdit" data-id="${t.id}">Edit</button>
+            </div>`).join('')}</div>`
+          : `<p class="muted small">Tip: save a workout as a template to start it in one tap next time.</p>`}
+        <div class="stack" style="margin-top:14px">
+          ${last ? `<button class="btn ${tpls.length ? '' : 'primary'}" data-act="startRepeat">Repeat last time (${relDays(last.date)})</button>` : ''}
           <button class="btn" data-act="startEmpty">Start empty</button>
+          <button class="btn ghost" data-act="tplNew" data-split="${s.day}">+ New template</button>
         </div>`;
+    }
+    case 'splits': {
+      const vis = visibleSplits();
+      const hid = state.splits.filter(x => x.hidden);
+      return `<h2>Your splits</h2>
+        <div class="split-list">${vis.map((x, i) => `
+          <div class="split-row" style="--c:${x.color}">
+            <span class="day-ico sm">${x.icon}</span>
+            <div class="sr-txt"><b>${esc(x.name)}</b><small>${tplCount(x.id)}</small></div>
+            <button data-act="splitMove" data-id="${x.id}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+            <button data-act="splitMove" data-id="${x.id}" data-d="1" ${i === vis.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+            <button data-act="splitEdit" data-id="${x.id}">Edit</button>
+          </div>`).join('')}</div>
+        <button class="btn primary" style="margin-top:12px" data-act="splitEdit">+ New split</button>
+        ${hid.length ? `<div class="section-title">Removed</div><div class="split-list">${hid.map(x => `
+          <div class="split-row off"><span class="day-ico sm">${x.icon}</span><div class="sr-txt"><b>${esc(x.name)}</b><small>Hidden · past workouts kept</small></div>
+          <button data-act="splitRestore" data-id="${x.id}">Restore</button></div>`).join('')}</div>` : ''}`;
+    }
+    case 'splitEdit': {
+      const d = s.draft;
+      return `<h2>${s.id ? 'Edit split' : 'New split'}</h2>
+        <label class="field"><span>Name</span><input id="spName" value="${esc(d.name)}" placeholder="e.g. Push, Arms, Full body" autocomplete="off"></label>
+        <div class="field"><span>Icon</span><div class="chips icons">${SPLIT_ICONS.map(ic => `<button data-act="spIcon" data-v="${ic}" class="${d.icon === ic ? 'on' : ''}">${ic}</button>`).join('')}</div></div>
+        <div class="field"><span>Color</span><div class="swatches">${SPLIT_COLORS.map(c => `<button data-act="spColor" data-v="${c}" class="${d.color === c ? 'on' : ''}" style="--sw:${c}" aria-label="Color ${c}"></button>`).join('')}</div></div>
+        <div class="field"><span>Muscles — these decide which exercises get suggested</span>
+          <div class="chips">${Object.entries(MUSCLES).map(([k, n]) => `<button data-act="spMuscle" data-v="${k}" class="${d.muscles.includes(k) ? 'on' : ''}">${n}</button>`).join('')}</div></div>
+        ${s.id ? `<div class="section-title">Templates</div>
+          ${state.templates.filter(t => t.splitId === s.id).map(t => `<div class="split-row"><div class="sr-txt"><b>${esc(t.name)}</b><small>${t.exercises.length} exercises</small></div><button data-act="tplEdit" data-id="${t.id}">Edit</button></div>`).join('') || '<p class="muted small">No templates yet.</p>'}
+          <button class="btn ghost" style="margin-top:8px" data-act="tplNew" data-split="${s.id}">+ New template</button>` : ''}
+        <div class="stack" style="margin-top:16px">
+          <button class="btn primary" data-act="spSave">Save split</button>
+          ${s.id ? `<button class="btn danger" data-act="spRemove">Remove split</button>` : ''}
+        </div>`;
+    }
+    case 'tplEdit': {
+      const d = s.draft;
+      const sp = dayType(d.splitId);
+      const groupsOrder = [...sp.muscles, ...Object.keys(MUSCLES).filter(m => !sp.muscles.includes(m))];
+      const opts = groupsOrder.map(m => {
+        const list = allExercises().filter(x => x.muscle === m).sort((a, b) => a.name.localeCompare(b.name));
+        return list.length ? `<optgroup label="${MUSCLES[m]}">${list.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</optgroup>` : '';
+      }).join('');
+      return `<h2>${s.id ? 'Edit template' : 'New template'}</h2>
+        <p class="muted small" style="margin-top:-6px">${sp.icon} ${esc(sp.name)} · order here is the order you'll do them</p>
+        <label class="field"><span>Name</span><input id="tplName" value="${esc(d.name)}" placeholder="e.g. Back first" autocomplete="off"></label>
+        <div class="tpl-ex">${d.exercises.length ? d.exercises.map((e, i) => `
+          <div class="tpl-row">
+            <span class="n">${i + 1}</span>
+            <span class="nm">${esc(exercise(e.exId).name)}${e.group ? ' <em>🔗 superset</em>' : ''}</span>
+            <button data-act="tplMove" data-i="${i}" data-d="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+            <button data-act="tplMove" data-i="${i}" data-d="1" ${i === d.exercises.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+            <button data-act="tplRemove" data-i="${i}" aria-label="Remove">✕</button>
+          </div>`).join('') : '<p class="muted small">No exercises yet — add some below.</p>'}</div>
+        <div class="row" style="margin-top:10px;align-items:center">
+          <select id="tplAdd" class="ex-select" style="margin:0">${opts}</select>
+          <button class="btn" style="flex:0 0 76px" data-act="tplAddEx">Add</button>
+        </div>
+        <div class="stack" style="margin-top:16px">
+          <button class="btn primary" data-act="tplSave">Save template</button>
+          ${s.id ? `<button class="btn danger" data-act="tplDelete">Delete template</button>` : ''}
+        </div>`;
+    }
+    case 'saveTpl': {
+      const w = state.activeWorkout;
+      const cur = w.templateId && state.templates.find(t => t.id === w.templateId);
+      return `<h2>Save as template</h2>
+        <p class="muted small">Saves these ${w.exercises.length} exercises in this order${w.exercises.some(e => e.group) ? ', including supersets' : ''}. Weights aren't saved — the app suggests those fresh each time.</p>
+        ${cur ? `<button class="btn primary" data-act="tplUpdateFromWorkout">Update “${esc(cur.name)}”</button><div class="section-title">Or save as a new one</div>` : ''}
+        <label class="field"><span>Template name</span><input id="newTplName" placeholder="e.g. Back first" autocomplete="off"></label>
+        <button class="btn ${cur ? '' : 'primary'}" data-act="tplSaveFromWorkout">Save new template</button>`;
     }
     case 'picker':
       return `<h2>Add exercise</h2>
@@ -1105,6 +1222,8 @@ function sheetHtml() {
           <div class="chips">${steps.map(v => `<button data-act="setStep" data-v="${v}" class="${inc === v ? 'on' : ''}">${v} lb</button>`).join('')}${steps.includes(inc) ? '' : `<button class="on">${inc} lb</button>`}</div>
         </div>
         <div class="menu-list">
+          <button data-act="moveEx" data-d="-1" ${s.ei === 0 ? 'disabled' : ''}><span>⬆️</span>Move up</button>
+          <button data-act="moveEx" data-d="1" ${s.ei === state.activeWorkout.exercises.length - 1 ? 'disabled' : ''}><span>⬇️</span>Move down</button>
           <button data-act="addWarmups"><span>🔥</span>Add warm-up sets</button>
           <button data-act="swapSheet"><span>🔄</span>Swap exercise</button>
           <button data-act="supersetSheet"><span>🔗</span>${e.group ? 'Add another to this superset' : 'Superset with…'}</button>
@@ -1279,12 +1398,149 @@ const actions = {
 
   start(el) {
     const day = el.dataset.day;
-    const last = [...state.workouts].reverse().find(w => w.dayType === day);
-    if (last) openSheet({ type: 'repeat', day, last });
+    if (lastWorkoutOf(day) || state.templates.some(t => t.splitId === day)) openSheet({ type: 'start', day });
     else startWorkout(day);
   },
-  startRepeat() { startWorkout(ui.sheet.day, ui.sheet.last); },
+  startRepeat() { startWorkout(ui.sheet.day, lastWorkoutOf(ui.sheet.day)); },
   startEmpty() { startWorkout(ui.sheet.day); },
+  startTemplate(el) {
+    const t = state.templates.find(x => x.id === el.dataset.id);
+    if (t) startWorkout(t.splitId, t, t);
+  },
+
+  // Splits
+  splitsSheet() { openSheet({ type: 'splits' }); },
+  splitEdit(el) {
+    const id = el.dataset.id;
+    const sp = id && state.splits.find(x => x.id === id);
+    const draft = sp
+      ? { name: sp.name, icon: sp.icon, color: sp.color, muscles: [...sp.muscles] }
+      : { name: '', icon: SPLIT_ICONS[5], color: SPLIT_COLORS[state.splits.length % SPLIT_COLORS.length], muscles: [] };
+    openSheet({ type: 'splitEdit', id, draft });
+  },
+  spIcon(el) { ui.sheet.draft.icon = el.dataset.v; renderSheet(); },
+  spColor(el) { ui.sheet.draft.color = el.dataset.v; renderSheet(); },
+  spMuscle(el) {
+    const d = ui.sheet.draft;
+    const m = el.dataset.v;
+    d.muscles = d.muscles.includes(m) ? d.muscles.filter(x => x !== m) : Object.keys(MUSCLES).filter(k => k === m || d.muscles.includes(k));
+    renderSheet();
+  },
+  spSave() {
+    const { id, draft } = ui.sheet;
+    draft.name = draft.name.trim();
+    if (!draft.name) { toast('Give the split a name'); $('#spName')?.focus(); return; }
+    if (!draft.muscles.length) { toast('Pick at least one muscle'); return; }
+    if (id) Object.assign(state.splits.find(x => x.id === id), draft);
+    else state.splits.push({ id: 's_' + uid(), ...draft });
+    save();
+    openSheet({ type: 'splits' });
+    render();
+  },
+  spRemove() {
+    const id = ui.sheet.id;
+    const sp = state.splits.find(x => x.id === id);
+    const used = state.workouts.some(w => w.dayType === id) || state.activeWorkout?.dayType === id;
+    withUndo(`Removed ${sp.name}`, () => {
+      // Splits with history are hidden so past workouts keep their name and color.
+      if (used) sp.hidden = true;
+      else {
+        state.splits = state.splits.filter(x => x.id !== id);
+        state.templates = state.templates.filter(t => t.splitId !== id);
+      }
+      save();
+    });
+    openSheet({ type: 'splits' });
+    render();
+  },
+  splitRestore(el) { delete state.splits.find(x => x.id === el.dataset.id).hidden; save(); renderSheet(); render(); },
+  splitMove(el) {
+    const vis = visibleSplits();
+    const i = vis.findIndex(x => x.id === el.dataset.id);
+    const other = vis[i + +el.dataset.d];
+    if (!other) return;
+    const a = state.splits.indexOf(vis[i]);
+    const b = state.splits.indexOf(other);
+    [state.splits[a], state.splits[b]] = [state.splits[b], state.splits[a]];
+    save();
+    renderSheet();
+    render();
+  },
+
+  // Templates
+  tplNew(el) {
+    const back = ui.sheet ? { type: ui.sheet.type, id: ui.sheet.id, day: ui.sheet.day } : null;
+    openSheet({ type: 'tplEdit', draft: { name: '', splitId: el.dataset.split, exercises: [] }, back });
+  },
+  tplEdit(el) {
+    const t = state.templates.find(x => x.id === el.dataset.id);
+    const back = ui.sheet ? { type: ui.sheet.type, id: ui.sheet.id, day: ui.sheet.day } : null;
+    openSheet({ type: 'tplEdit', id: t.id, draft: { name: t.name, splitId: t.splitId, exercises: t.exercises.map(e => ({ ...e })) }, back });
+  },
+  tplMove(el) {
+    const ex = ui.sheet.draft.exercises;
+    const i = +el.dataset.i;
+    const j = i + +el.dataset.d;
+    if (j < 0 || j >= ex.length) return;
+    [ex[i], ex[j]] = [ex[j], ex[i]];
+    renderSheet();
+  },
+  tplRemove(el) { ui.sheet.draft.exercises.splice(+el.dataset.i, 1); renderSheet(); },
+  tplAddEx() {
+    const id = $('#tplAdd').value;
+    if (id) ui.sheet.draft.exercises.push({ exId: id });
+    renderSheet();
+  },
+  tplSave() {
+    const { id, draft } = ui.sheet;
+    draft.name = draft.name.trim() || `${dayType(draft.splitId).name} ${state.templates.filter(t => t.splitId === draft.splitId).length + 1}`;
+    if (!draft.exercises.length) { toast('Add at least one exercise'); return; }
+    if (id) Object.assign(state.templates.find(t => t.id === id), draft);
+    else state.templates.push({ id: 't_' + uid(), ...draft });
+    save();
+    toast('Template saved');
+    reopenSheet(ui.sheet.back);
+    render();
+  },
+  tplDelete() {
+    const { id, back } = ui.sheet;
+    const t = state.templates.find(x => x.id === id);
+    withUndo(`Deleted ${t.name}`, () => { state.templates = state.templates.filter(x => x.id !== id); save(); });
+    reopenSheet(back);
+    render();
+  },
+  saveTplSheet() { openSheet({ type: 'saveTpl' }); },
+  tplSaveFromWorkout() {
+    const w = state.activeWorkout;
+    const name = $('#newTplName').value.trim();
+    if (!name) { toast('Give it a name'); $('#newTplName').focus(); return; }
+    const t = { id: 't_' + uid(), splitId: w.dayType, name, exercises: tplExercises(w) };
+    state.templates.push(t);
+    w.templateId = t.id;
+    w.templateName = t.name;
+    save();
+    closeSheet();
+    render();
+    toast(`Saved “${name}”`);
+  },
+  tplUpdateFromWorkout() {
+    const w = state.activeWorkout;
+    const t = state.templates.find(x => x.id === w.templateId);
+    t.exercises = tplExercises(w);
+    save();
+    closeSheet();
+    toast(`Updated “${t.name}”`);
+  },
+  moveEx(el) {
+    const ex = state.activeWorkout.exercises;
+    const i = ui.sheet.ei;
+    const j = i + +el.dataset.d;
+    if (j < 0 || j >= ex.length) return;
+    [ex[i], ex[j]] = [ex[j], ex[i]];
+    ui.sheet.ei = j;
+    save();
+    render();
+  },
   picker() { openSheet({ type: 'picker' }); },
   pick(el) {
     if (state.activeWorkout.exercises.some(e => e.exId === el.dataset.id) && !confirm('Already added. Add it again?')) return;
@@ -1699,6 +1955,8 @@ document.addEventListener('pointerdown', ev => {
 document.addEventListener('input', ev => {
   const el = ev.target;
   if (el.id === 'pickerSearch') { $('#pickerList').innerHTML = pickerList(el.value); return; }
+  // Keep typed names in the draft so re-rendering the sheet doesn't lose them.
+  if (el.id === 'spName' || el.id === 'tplName') { ui.sheet.draft.name = el.value; return; }
   const f = el.dataset.field;
   if (f === 'weight' || f === 'reps') {
     const c = setCtx(el);

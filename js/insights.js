@@ -49,7 +49,9 @@ export function recommendSplit(workouts, lookup, dayTypes, now = Date.now()) {
 
   let best = null;
   for (const d of dayTypes) {
-    const muscles = d.muscles.filter(m => m !== 'abs');
+    const main = d.muscles.filter(m => m !== 'abs');
+    const muscles = main.length ? main : d.muscles;
+    if (!muscles.length) continue;
     const recov = muscles.reduce((s, m) => s + Math.min(daysSince(m), 4), 0) / muscles.length;
     const lastOfSplit = [...sorted].reverse().find(w => w.dayType === d.id);
     const splitGap = lastOfSplit ? (now - new Date(lastOfSplit.date).getTime()) / DAY : 14;
