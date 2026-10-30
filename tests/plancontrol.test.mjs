@@ -504,3 +504,48 @@ test('off-plan workouts the day before steer which session comes next', () => {
   const week = currentWeek(plan, ws, lookup, MONDAY + 3 * DAY);
   assert.equal(week.days[3].session.type, 'lower', 'after an upper day, the next session is lower');
 });
+
+test('the plan shows a full week ahead, continuing the rotation into next week', async () => {
+  const { upcomingDays } = await import('../js/plancontrol.js');
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  const plan = fresh(p6, 'upper_lower', MONDAY - 7 * DAY);
+  for (let d = 0; d < 7; d++) {
+    const t = MONDAY + d * DAY + 9 * 3600000;
+    const up = upcomingDays(plan, [], lookup, t);
+    assert.equal(up.todayIndex, d);
+    assert.equal(up.days.length, 7 + d, 'this week plus the next days up to 6 ahead');
+    const ahead = up.days.slice(d, d + 7);
+    assert.equal(ahead.length, 7);
+    // Dates are consecutive.
+    for (let i = 1; i < up.days.length; i++) {
+      const gap = (new Date(up.days[i].date + 'T12:00:00') - new Date(up.days[i - 1].date + 'T12:00:00')) / DAY;
+      assert.ok(Math.abs(gap - 1) < 0.05, `date gap ${gap} at ${i}`);
+    }
+    // Sequence numbers never repeat and keep counting up across the week boundary.
+    const seqs = up.days.filter(x => x.kind === 'train').map(x => x.session.seq);
+    assert.equal(new Set(seqs).size, seqs.length, `repeated seq ${seqs}`);
+    assert.deepEqual([...seqs].sort((a, b) => a - b), seqs.slice().sort((a, b) => a - b));
+    // Upper/Lower alternates across the boundary.
+    const types = up.days.filter(x => x.kind === 'train').map(x => x.session.type);
+    for (let i = 1; i < types.length; i++) if (up.days.filter(x => x.kind === 'train')[i].week === up.days.filter(x => x.kind === 'train')[i - 1].week) assert.notEqual(types[i], types[i - 1]);
+  }
+  // Friday: shows through next Thursday.
+  const fri = upcomingDays(plan, [], lookup, MONDAY + 4 * DAY + 9 * 3600000);
+  assert.equal(fri.days.at(-1).week, 1);
+  assert.equal(fri.days.at(-1).weekday, 3);
+  assert.equal(fri.days.filter(x => x.week === 1 && x.kind === 'train').length, 4);
+});
+
+test('the week ahead works across a daylight-saving change', async () => {
+  const { upcomingDays } = await import('../js/plancontrol.js');
+  // US DST ends Sun Nov 1 2026; Europe ends Oct 25. Check the weeks around both.
+  for (const start of [new Date(2026, 9, 19, 9), new Date(2026, 9, 26, 9), new Date(2026, 2, 2, 9), new Date(2026, 2, 23, 9)]) {
+    const plan = fresh({ ...profile, days: [0, 1, 2, 3, 4, 5] }, 'upper_lower', start.getTime() - 7 * DAY);
+    const t = start.getTime() + 5 * DAY;
+    const up = upcomingDays(plan, [], lookup, t);
+    for (let i = 1; i < up.days.length; i++) {
+      const gap = (new Date(up.days[i].date + 'T12:00:00') - new Date(up.days[i - 1].date + 'T12:00:00')) / DAY;
+      assert.ok(Math.abs(gap - 1) < 0.05, `${start.toDateString()}: gap ${gap}`);
+    }
+  }
+});

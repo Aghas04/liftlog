@@ -116,6 +116,28 @@ export function ownWorkouts(plan, workouts) {
   return workouts.map(w => (w.plan && w.plan.id !== plan.id ? { ...w, plan: undefined } : w));
 }
 
+/**
+ * This week's days plus the next week's up to 6 days past today, so the plan
+ * always shows a full week ahead. Next week is a projection: it assumes this
+ * week's remaining sessions get done, and shifts if days are missed or moved.
+ * Returns { days: [{ ...day, week: 0 | 1 }], todayIndex, thisWeek, nextWeek }.
+ */
+export function upcomingDays(plan, workouts, lookup, now = Date.now(), secPerSet = 130) {
+  const own = ownWorkouts(plan, workouts);
+  const thisWeek = planWeek({ profile: plan.profile, plan, workouts: own, lookup, now, secPerSet });
+  // Calendar math, not +7 days of ms, so DST changes can't land on the wrong week.
+  const next = new Date(thisWeek.weekStart);
+  next.setDate(next.getDate() + 7);
+  next.setHours(0, 1, 0, 0);
+  const assumed = thisWeek.days.filter(d => d.kind === 'train').map(d => ({
+    id: `assumed-${d.session.seq}`, date: new Date(d.date + 'T12:00:00').toISOString(), plan: { id: plan.id, seq: d.session.seq }, exercises: [],
+  }));
+  const nextWeek = planWeek({ profile: plan.profile, plan, workouts: [...own, ...assumed], lookup, now: next.getTime(), secPerSet });
+  const todayIndex = (new Date(now).getDay() + 6) % 7;
+  const days = [...thisWeek.days.map(d => ({ ...d, week: 0 })), ...nextWeek.days.slice(0, todayIndex).map(d => ({ ...d, week: 1 }))];
+  return { days, todayIndex, thisWeek, nextWeek };
+}
+
 /** Today's day in the week plan, or null. */
 export function todayOf(week, now = Date.now()) {
   const i = (new Date(now).getDay() + 6) % 7;

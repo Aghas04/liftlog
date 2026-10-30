@@ -710,3 +710,8 @@ label.btn { cursor: pointer; }
 .rv-group summary { padding: 12px 0; font-weight: 800; cursor: pointer; }
 .rv-group summary small { color: var(--muted); font-weight: 600; margin-left: 6px; }
 .rv-group .rv-row:last-child { border-bottom: 0; }
+.plan-week.scroller { position: relative; max-height: 540px; overflow-y: auto; scroll-snap-type: y proximity; -webkit-overflow-scrolling: touch; padding: 2px; margin: 0 -2px; overscroll-behavior: contain; }
+.plan-week.scroller > * { scroll-snap-align: start; }
+.pd-divider { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 8px 4px 0; }
+.plan-day.ahead { border-style: dashed; }
+.pd-hint { font-size: 12px; color: var(--muted); margin: -8px 0 8px; }

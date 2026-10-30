@@ -10,7 +10,7 @@ import {
 } from './engine.js';
 import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter } from './planner.js';
 import {
-  createPlan, blockedLifts, maintainPlan, currentWeek, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
+  createPlan, blockedLifts, maintainPlan, currentWeek, upcomingDays, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
   unexclude, dropFromBlock, sessionEntries, runReview, approveReview, postponeReview, reviewDue, isPaused, blockWeek,
   replacementFor, swapOptions, STRENGTH_ZONE,
 } from './plancontrol.js';
@@ -1294,6 +1294,10 @@ function render(animate = false) {
     view.classList.add('enter');
     countUp(view);
   }
+  // Plan tab: the day list opens at today.
+  const sc = ui.tab === 'plan' && $('#planScroll');
+  const todayRow = sc && sc.querySelector('.plan-day.today');
+  if (todayRow) sc.scrollTop = todayRow.offsetTop - sc.querySelector('.plan-day').offsetTop;
   renderTabs();
   renderSheet();
   tick();
@@ -1330,6 +1334,8 @@ function keepPlanCurrent() {
 
 const planWeekNow = () => (state.plan ? currentWeek(state.plan, state.workouts, exercise, Date.now(), pace()) : null);
 const planDayBySeq = (week, seq) => week?.days.find(d => d.kind === 'train' && d.session.seq === seq) || null;
+// This week plus a projection up to 6 days past today.
+const planUpcoming = () => upcomingDays(state.plan, state.workouts, exercise, Date.now(), pace());
 const sessionMuscles = s => [...new Set(s.items.map(i => i.muscle))].map(m => MUSCLES[m]).join(' · ');
 
 // Home: today's planned workout leads.
@@ -1347,13 +1353,13 @@ function todayPlanHtml(week) {
       <div class="pick-txt"><small>Today's plan</small><b>${esc(s.name)}</b><span>${s.items.length} exercises · ≈ ${s.estMinutes} min · ${esc(sessionMuscles(s))}</span></div>
       <span class="go">${ICON.arrow}</span></button>`;
   }
-  const next = nextTraining(week);
-  const nextTxt = next ? `Next: ${esc(next.session.name)} on ${WEEKDAYS[next.weekday]}.` : 'Next week starts Monday.';
+  const next = nextTraining(week) || planUpcoming().days.find(d => d.week === 1 && d.kind === 'train');
+  const nextTxt = next ? `Next: ${esc(next.session.name)} on ${next.week ? 'next ' : ''}${WEEKDAYS[next.weekday]}.` : 'Next week starts Monday.';
   const head = today.kind === 'done' ? ['✅', 'Done for today', 'Nice work. ' + nextTxt]
     : today.kind === 'activity' ? ['🏃', esc(today.activity.name), nextTxt]
       : ['😴', 'Rest day', nextTxt];
   return `<div class="pick-card rest"><span class="day-ico">${head[0]}</span><div class="pick-txt"><small>Today</small><b>${head[1]}</b><span>${head[2]}</span></div>
-    ${next && today.kind !== 'done' ? `<button class="mini-btn" data-act="planStart" data-seq="${next.session.seq}">Do it today</button>` : ''}</div>`;
+    ${next && !next.week && today.kind !== 'done' ? `<button class="mini-btn" data-act="planStart" data-seq="${next.session.seq}">Do it today</button>` : ''}</div>`;
 }
 
 function reviewCardHtml() {
@@ -1386,11 +1392,12 @@ function viewPlan() {
       <button class="icon-btn" data-act="settings" aria-label="Settings">${ICON.gear}</button></div>${planIntroHtml(false)}`;
   }
   const split = splitById(plan.splitId);
-  const week = planWeekNow();
+  const up = planUpcoming();
+  const week = up.thisWeek;
   const paused = isPaused(plan);
   const bw = Math.min(blockWeek(plan) + 1, plan.blockWeeks || 5);
   const tIdx = todayIdx();
-  const rows = week.days.map(d => {
+  const rows = up.days.map((d, i) => {
     const date = new Date(d.date + 'T12:00:00');
     const when = `<div class="pd-date"><b>${WEEKDAYS[d.weekday]}</b><small>${date.getDate()}</small></div>`;
     const act = d.activity && d.kind !== 'activity' ? ` · ${esc(d.activity.name)}` : '';
@@ -1418,7 +1425,9 @@ function viewPlan() {
       body = `<b>Rest</b><small>${act ? act.slice(3) : 'Recover'}</small>`;
     }
     const tag = attrs ? 'button' : 'div';
-    return `<${tag} class="plan-day ${d.kind} ${d.weekday === tIdx ? 'today' : ''}" style="--c:${color}" ${attrs}>${when}<div class="pd-body">${body}</div>${attrs ? `<span class="pd-go">›</span>` : ''}</${tag}>`;
+    const divider = d.week === 1 && up.days[i - 1]?.week === 0 ? `<div class="pd-divider">Next week · planned ahead</div>` : '';
+    const isToday = d.week === 0 && d.weekday === tIdx;
+    return `${divider}<${tag} class="plan-day ${d.kind} ${isToday ? 'today' : ''} ${d.week ? 'ahead' : ''}" style="--c:${color}" ${attrs}>${when}<div class="pd-body">${body}</div>${attrs ? `<span class="pd-go">›</span>` : ''}</${tag}>`;
   }).join('');
   // Weekly sets per muscle: planned target vs done so far.
   const done = muscleSets(state.workouts, exercise, new Date(week.weekStart).toISOString());
@@ -1429,7 +1438,8 @@ function viewPlan() {
     <button class="icon-btn" data-act="settings" aria-label="Settings">${ICON.gear}</button></div>
   ${paused ? `<div class="banner info"><div>⏸️ <b>Paused</b> until ${fmtDate(plan.pausedUntil)}.</div><button data-act="planResume">Resume</button></div>` : ''}
   ${reviewCardHtml()}
-  <div class="plan-week">${rows}</div>
+  ${tIdx ? `<p class="pd-hint">Today and the 6 days after it. Scroll up for earlier days.</p>` : ''}
+  <div class="plan-week scroller" id="planScroll">${rows}</div>
   ${week.notes.length ? `<div class="plan-notes">${week.notes.map(n => `<p>ℹ️ ${esc(n)}</p>`).join('')}</div>` : ''}
   ${vol ? `<details class="card vol-card"><summary>Weekly sets per muscle</summary>${vol}<p class="muted small">Direct sets count fully; small muscles also count half of the work they get from bigger lifts.</p></details>` : ''}
   <div class="plan-actions">
@@ -1457,7 +1467,7 @@ function startPlanned(seq, readiness) {
 // Edit a planned session (this week, or the slot for the rest of the block).
 function applyPlanEdit(seq, i, action, to) {
   const scope = ui.sheet?.scope || 'week';
-  const day = planDayBySeq(planWeekNow(), seq);
+  const day = planDayBySeq(planUpcoming(), seq);
   const it = day?.session.items[i];
   if (!it) return;
   const r = editSession(state.plan, { seq, type: day.session.type, slot: day.session.slot, action, from: it.exId, to, scope }, planCtx());
@@ -2068,7 +2078,7 @@ function sheetHtml() {
     case 'readiness':
       return readinessHtml();
     case 'planSession': {
-      const day = planDayBySeq(planWeekNow(), s.seq);
+      const day = planDayBySeq(planUpcoming(), s.seq);
       if (!day) return `<h2>Session</h2><div class="empty">This session is no longer planned.</div>`;
       const ss = day.session;
       const dt = PLAN_DAYS[ss.type];
@@ -2085,14 +2095,14 @@ function sheetHtml() {
       }).join('');
       const isToday = day.weekday === todayIdx();
       return `<h2>${dt.icon} ${esc(ss.name)}</h2>
-        <p class="muted small" style="margin-top:-6px">${WEEKDAYS[day.weekday]} · ${ss.items.length} exercises · ≈ ${ss.estMinutes} min${ss.notes.length ? ' · ' + esc(ss.notes.join(' · ')) : ''}</p>
+        <p class="muted small" style="margin-top:-6px">${day.week ? 'Next ' : ''}${WEEKDAYS[day.weekday]} · ${ss.items.length} exercises · ≈ ${ss.estMinutes} min${ss.notes.length ? ' · ' + esc(ss.notes.join(' · ')) : ''}</p>
         <div class="field"><span>Edits apply to</span><div class="seg">${[['week', 'This session'], ['block', 'Rest of block']].map(([v, l]) => `<button data-act="planScope" data-v="${v}" class="${s.scope === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
         <div class="bp-list">${rows || '<div class="empty">Everything was removed.</div>'}</div>
         <p class="muted small">Swap or remove the same lift twice and the plan stops picking it.</p>
-        <button class="btn primary" style="margin-top:8px" data-act="planStart" data-seq="${ss.seq}">${isToday ? 'Start workout' : 'Do it today'}</button>`;
+        ${day.week ? `<p class="muted small">Planned for next week. It shifts if you miss or move a day before then.</p>` : `<button class="btn primary" style="margin-top:8px" data-act="planStart" data-seq="${ss.seq}">${isToday ? 'Start workout' : 'Do it today'}</button>`}`;
     }
     case 'planSwap': {
-      const day = planDayBySeq(planWeekNow(), s.seq);
+      const day = planDayBySeq(planUpcoming(), s.seq);
       const it = day?.session.items[s.i];
       if (!it) return `<h2>Swap</h2><div class="empty">Nothing to swap.</div>`;
       const ex = exercise(it.exId);
