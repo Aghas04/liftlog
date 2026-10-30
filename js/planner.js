@@ -66,15 +66,31 @@ function rng(seed) {
   };
 }
 
-/** Weekly direct-set target per muscle. overrides come from block reviews. */
-export function weeklyTargets(profile, overrides = {}) {
+// Share of the time limit filled with planned sets; the rest absorbs warm-ups
+// and the occasional longer rest.
+export const TIME_FILL = 0.85;
+
+/**
+ * Weekly direct-set target per muscle. overrides come from block reviews.
+ * When the weekly time (days x minutes) fits more than the level's base
+ * volume, every muscle scales up together, never past the level's maximum
+ * (more sets keep helping, with diminishing returns: Pelland 2024).
+ */
+export function weeklyTargets(profile, overrides = {}, secPerSet = 130) {
   const lvl = LEVELS[profile.level] || LEVELS.intermediate;
-  const out = {};
+  const base = {};
   for (const m of Object.keys(MUSCLES)) {
-    if (overrides[m] != null) { out[m] = overrides[m]; continue; }
     let t = lvl.base * (SIZE_FACTOR[m] || 1);
     if ((profile.priority || []).includes(m)) t += 4;
-    out[m] = Math.round(Math.min(t, lvl.max * (SIZE_FACTOR[m] || 1) + 4));
+    base[m] = Math.min(t, volumeBounds(profile, m)[1]);
+  }
+  const days = (profile.days || []).length;
+  const capacity = days * Math.floor(((profile.minutes || 60) * 60) / secPerSet) * TIME_FILL;
+  const total = Object.values(base).reduce((a, b) => a + b, 0);
+  const boost = days && capacity > total ? capacity / total : 1;
+  const out = {};
+  for (const m of Object.keys(MUSCLES)) {
+    out[m] = overrides[m] != null ? overrides[m] : Math.round(Math.min(base[m] * boost, volumeBounds(profile, m)[1]));
   }
   return out;
 }
@@ -127,7 +143,7 @@ function schedulePenalty(types, weekdays, legActivityDays) {
 export function recommendSplits(profile, opts = {}) {
   const days = (profile.days || []).length;
   const secPerSet = opts.secPerSet || 130;
-  const targets = weeklyTargets(profile, opts.volume);
+  const targets = weeklyTargets(profile, opts.volume, secPerSet);
   const legActivity = new Set((profile.activities || []).filter(a => a.legs).map(a => a.day));
   const weekdays = [...(profile.days || [])].sort((a, b) => a - b);
   return SPLITS.map(split => {
@@ -414,7 +430,7 @@ export function planWeek(input) {
 
   // Volume: weekly targets minus what's already done this week, spread over
   // the remaining sessions (never above the per-session cap).
-  let targets = weeklyTargets(profile, plan.volume);
+  let targets = weeklyTargets(profile, plan.volume, secPerSet);
   const ease = plan.easeWeek && String(plan.easeWeek) === wk ? 0.7 : 1;
   // Smallest useful dose per session: half of a normal session's share, at
   // least 2 sets. Extra workouts during the week never shrink a planned
@@ -522,10 +538,10 @@ export function planWeek(input) {
  * stalled lifts and accessory rotation.
  */
 export function reviewBlock(input) {
-  const { profile, plan, workouts, lookup, bwOn = () => 0, exercises, usage = {}, blocked = [] } = input;
+  const { profile, plan, workouts, lookup, bwOn = () => 0, exercises, usage = {}, blocked = [], secPerSet = 130 } = input;
   const start = plan.blockStart;
   const block = workouts.filter(w => w.date >= start);
-  const targets = weeklyTargets(profile, plan.volume);
+  const targets = weeklyTargets(profile, plan.volume, secPerSet);
   const volume = {};
   const progressOf = {};
   for (const m of Object.keys(MUSCLES)) {

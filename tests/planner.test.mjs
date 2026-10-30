@@ -59,7 +59,7 @@ test('every split, day count, time limit, level, goal and equipment produces a v
   let weeks = 0;
   for (const split of SPLITS) {
     for (let n = split.days[0]; n <= split.days[1]; n++) {
-      for (const minutes of [30, 45, 60, 90]) {
+      for (const minutes of [30, 45, 60, 90, 120]) {
         for (const level of ['beginner', 'intermediate', 'advanced']) {
           for (const goal of ['muscle', 'strength']) {
             for (const equipment of Object.keys(EQUIPMENT_PROFILES)) {
@@ -354,4 +354,36 @@ test('the plan for later days doesn\'t shrink as earlier sessions get done', () 
       assert.ok(Math.abs(setsFor(thursday, d, m) - setsFor(monday, d, m)) <= 1, `${m} on day ${d}: ${setsFor(monday, d, m)} on Monday's view, ${setsFor(thursday, d, m)} on Thursday's`);
     }
   }
+});
+
+test('more time means more weekly volume, never past the level maximum', () => {
+  for (const level of ['beginner', 'intermediate', 'advanced']) {
+    for (const days of [[0, 3], [0, 2, 4], [0, 1, 3, 4], [0, 1, 2, 3, 4, 5]]) {
+      let prev = null;
+      for (const minutes of [30, 45, 60, 75, 90, 120]) {
+        const t = weeklyTargets({ ...base, level, days, minutes, priority: ['chest'] });
+        for (const m of Object.keys(MUSCLES)) {
+          assert.ok(t[m] <= volumeBounds({ ...base, level, priority: ['chest'] }, m)[1], `${level} ${minutes}min ${m}: ${t[m]} over max`);
+          if (prev) assert.ok(t[m] >= prev[m], `${level} ${days.length}d: ${m} dropped from ${prev[m]} to ${t[m]} with more time`);
+        }
+        prev = t;
+      }
+    }
+  }
+  // Short sessions keep the level's base volume (unchanged from before).
+  assert.equal(weeklyTargets({ ...base, level: 'intermediate', days: [0, 1, 3, 4], minutes: 60 }).chest, 14);
+  // A lot of time reaches the maximum.
+  assert.equal(weeklyTargets({ ...base, level: 'intermediate', days: [0, 1, 2, 3, 4, 5], minutes: 120 }).chest, 20);
+  // Block-review overrides still win.
+  assert.equal(weeklyTargets({ ...base, level: 'intermediate', days: [0, 1, 2, 3, 4, 5], minutes: 120 }, { chest: 16 }).chest, 16);
+});
+
+test('2-hour sessions use the extra time and still fit it', () => {
+  const profile = { ...base, days: [0, 1, 2, 3, 4, 5], minutes: 120 };
+  const short = { ...profile, minutes: 60 };
+  const long = planWeek({ profile, plan: makePlan(profile, 'upper_lower'), lookup, now: MONDAY });
+  const normal = planWeek({ profile: short, plan: makePlan(short, 'upper_lower'), lookup, now: MONDAY });
+  const sets = w => w.days.filter(d => d.kind === 'train').reduce((a, d) => a + d.session.items.reduce((b, i) => b + i.sets, 0), 0);
+  assert.ok(sets(long) > sets(normal) * 1.2, `${sets(long)} vs ${sets(normal)}`);
+  for (const d of long.days.filter(x => x.kind === 'train')) assert.ok(d.session.estMinutes <= 120, `${d.session.name} ${d.session.estMinutes} min`);
 });

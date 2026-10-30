@@ -1539,7 +1539,8 @@ function setupHtml() {
         <div class="chips">${WEEKDAYS.map((n, i) => chip('suDay', i, n, d.days.includes(i))).join('')}</div></div>
       <p class="muted small">${d.days.length} day${d.days.length === 1 ? '' : 's'} a week. You can move days for a single week any time.</p>
       <div class="field"><span>How long per workout?</span>
-        <div class="chips">${[30, 45, 60, 75, 90, 120].map(v => chip('suMin', v, `${v} min`, d.minutes === v)).join('')}</div></div>`;
+        <div class="chips">${[30, 45, 60, 75, 90, 120].map(v => chip('suMin', v, `${v} min`, d.minutes === v)).join('')}</div></div>
+      <p class="muted small">More time means more sets per muscle, up to the most that still pays off for your experience level. Past that, sessions end early rather than adding junk volume.</p>`;
   } else if (d.step === 1) {
     body = `<div class="field"><span>Experience</span><div class="choices">${Object.entries(LEVEL_INFO).map(([k, v]) => choice('suLevel', k, v, d.level === k)).join('')}</div></div>
       <div class="field"><span>Main goal</span><div class="choices">${Object.entries(GOAL_INFO).map(([k, v]) => choice('suGoal', k, v, d.goal === k)).join('')}</div></div>`;
@@ -1581,6 +1582,7 @@ function setupHtml() {
 
 const WHY = [
   ['📊', 'Weekly sets per muscle drive growth', 'The number of hard sets each muscle gets per week is the strongest training predictor of muscle growth, with diminishing returns at higher volumes. Sets that train a muscle indirectly (triceps on bench press) count about half.', 'Pelland et al. 2024 (meta-regression, 67 studies); Schoenfeld, Ogborn & Krieger 2017'],
+  ['⏳', 'Your time sets the volume, up to a point', 'More weekly sets build more muscle, but each extra set adds less. So the plan fills the time you give it, then stops at about 14 sets per muscle per week for beginners, 20 for intermediates and 24 for advanced lifters. Past that, extra sets mostly add fatigue.', 'Pelland et al. 2024; Baz-Valle et al. 2022'],
   ['✂️', 'Volume is spread across the week', 'Gains per session level off somewhere around 6–11 hard sets for one muscle, so the plan caps each muscle at 10 sets in a session and splits the rest over more days.', 'Remmert et al. (preprint, per-session volume); Schoenfeld et al. 2016'],
   ['🔁', 'Any split works if volume matches', 'With the same weekly sets, full body, upper/lower and push/pull/legs build muscle about equally. Training a muscle about twice a week mostly helps because it fits more good sets. That is why the plan ranks splits by your days and time, not by "best split".', 'Ramos-Campo et al. 2024; Schoenfeld, Grgic & Krieger 2019'],
   ['📌', 'Fixed main lifts, rotating accessories', 'Random exercise changes slow strength gains. Planned variation helps: main lifts stay the same for a 4–6 week block so progress is measurable, while accessories rotate between blocks to cover every part of a muscle.', 'Kassiano et al. 2022 (systematic review)'],
@@ -2750,7 +2752,7 @@ const actions = {
 
   // Block review
   reviewSheet() {
-    ui.review = runReview(state.plan, { workouts: state.workouts, lookup: exercise, bwOn: bodyweightOn, exercises: allExercises(), usage: usageCounts(), blocked: blocked() });
+    ui.review = runReview(state.plan, { workouts: state.workouts, lookup: exercise, bwOn: bodyweightOn, exercises: allExercises(), usage: usageCounts(), blocked: blocked(), secPerSet: pace() });
     ui.reviewAcc = { volume: {}, swaps: [] };
     openSheet({ type: 'review' });
   },
