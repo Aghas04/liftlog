@@ -82,16 +82,16 @@ export const DEFAULT_FATIGUE_RATE = 0.012;
 export const fatigueFactor = (f, rate = DEFAULT_FATIGUE_RATE) => Math.max(0.7, 1 - rate * (f || 0));
 
 /**
- * Learn how much this lifter's strength drops per fatigue point from sessions
- * done at different positions, while allowing for getting stronger over time
- * (least squares on log e1RM vs days and fatigue). Shrunk toward the default
- * until there's plenty of data.
+ * Fit how much strength drops per fatigue point from one lift's sessions done
+ * at different positions, while allowing for getting stronger over time
+ * (least squares on log e1RM vs days and fatigue).
+ * Returns { rate, n } or null when the sessions don't vary enough to tell.
  */
-export function learnFatigueRate(points) {
+export function fitFatigueRate(points) {
   const pts = points.filter(p => p.e1rm > 0 && p.f != null);
-  if (pts.length < 4) return DEFAULT_FATIGUE_RATE;
+  if (pts.length < 4) return null;
   const fs = pts.map(p => p.f);
-  if (Math.max(...fs) - Math.min(...fs) < 3) return DEFAULT_FATIGUE_RATE;
+  if (Math.max(...fs) - Math.min(...fs) < 3) return null;
   const n = pts.length;
   const mean = a => a.reduce((s, v) => s + v, 0) / n;
   const t = pts.map(p => p.t), y = pts.map(p => Math.log(p.e1rm));
@@ -102,17 +102,46 @@ export function learnFatigueRate(points) {
     stt += dt * dt; sff += df * df; stf += dt * df; sty += dt * dy; sfy += df * dy;
   }
   const det = stt * sff - stf * stf;
-  if (det <= 1e-9) return DEFAULT_FATIGUE_RATE;
-  const fitted = Math.min(0.03, Math.max(0.003, -(stt * sfy - stf * sty) / det));
-  return (n * fitted + 4 * DEFAULT_FATIGUE_RATE) / (n + 4);
+  if (det <= 1e-9) return null;
+  return { rate: Math.min(0.03, Math.max(0.003, -(stt * sfy - stf * sty) / det)), n };
+}
+
+/**
+ * Fatigue rate for one lift, shrunk toward `prior` (the lifter's personal
+ * rate, or the default) until there's plenty of data for this lift.
+ */
+export function learnFatigueRate(points, prior = DEFAULT_FATIGUE_RATE) {
+  const fit = fitFatigueRate(points);
+  if (!fit) return prior;
+  return (fit.n * fit.rate + 4 * prior) / (fit.n + 4);
+}
+
+/**
+ * The lifter's overall fatigue rate, pooled from every lift that has enough
+ * varied sessions (weighted by sessions), shrunk toward the default.
+ * pointsByLift: arrays of { t, e1rm, f } per lift.
+ * Returns { rate, lifts, sessions }.
+ */
+export function personalFatigueRate(pointsByLift) {
+  let sum = 0, sessions = 0, lifts = 0;
+  for (const pts of pointsByLift) {
+    const fit = fitFatigueRate(pts.slice(-12));
+    if (!fit) continue;
+    sum += fit.rate * fit.n;
+    sessions += fit.n;
+    lifts++;
+  }
+  const rate = sessions ? (sum + 8 * DEFAULT_FATIGUE_RATE) / (sessions + 8) : DEFAULT_FATIGUE_RATE;
+  return { rate, lifts, sessions };
 }
 
 /**
  * @param ex        exercise { equipment, compound, increment? }
  * @param history   past sessions for this exercise, oldest first:
  *                  { date: ISO, difficulty?: 'easy'|'hard'|'too_hard', sets: [...], fatigue?: number }
- * @param opts      { bodyweight?: number, now?: number, increment: number, fatigue?: number }
+ * @param opts      { bodyweight?: number, now?: number, increment: number, fatigue?: number, fatigueRate?: number }
  *                  fatigue = how tired this muscle will be at this point of today's workout
+ *                  fatigueRate = the lifter's personal rate, the starting point for this lift
  * @returns null when there is no usable history, else
  *          { weight, reps: number[], kind, reason }
  */
@@ -159,7 +188,7 @@ export function suggest(ex, history, opts) {
   // muscle was when it was done, then apply today's fatigue at the end.
   const rate = learnFatigueRate(valid.slice(-12).map(s => ({
     t: new Date(s.date).getTime() / DAY, e1rm: sessionE1RM(s, ex, bw), f: s.fatigue,
-  })));
+  })), opts.fatigueRate || DEFAULT_FATIGUE_RATE);
   const fresh = s => sessionE1RM(s, ex, bw) / fatigueFactor(s.fatigue, rate);
 
   // Strength estimate. A better session counts in full; a worse one is

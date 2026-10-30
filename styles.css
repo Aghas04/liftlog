@@ -548,3 +548,12 @@ label.btn { cursor: pointer; }
 .tpl-row button { width: 34px; height: 34px; border-radius: 10px; background: var(--surface); font-weight: 800; }
 .tpl-row button:disabled { opacity: 0.3; }
 .menu-list button:disabled { opacity: 0.35; }
+
+/* ---------- Fatigue profile ---------- */
+.fp-bars { display: grid; gap: 6px; }
+.fp-bars > div { display: grid; grid-template-columns: 64px 1fr 44px; align-items: center; gap: 10px; font-size: 13px; }
+.fp-bars > div > div { height: 8px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.fp-bars i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+.fp-bars .avg i { background: #5b6370; }
+.fp-bars b { text-align: right; }
+.fp-bars .avg span, .fp-bars .avg b { color: var(--muted); }

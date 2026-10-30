@@ -3,7 +3,10 @@ import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
   dayType, visibleSplits,
 } from './store.js';
-import { suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad } from './engine.js';
+import {
+  suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
+  personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE,
+} from './engine.js';
 import { recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets } from './insights.js';
 import { listPhotos, photoBlob, addPhoto, deletePhoto } from './photos.js';
 import { workoutCard, shareOrDownload } from './share.js';
@@ -221,8 +224,24 @@ function setsFrom(sug) {
     : [{ weight: null, reps: null, target: null, done: false }];
 }
 
+// The lifter's overall fatigue rate from all lifts. Cached until workouts change.
+let rateCache = null;
+function personalRate() {
+  const key = `${state.workouts.length}|${state.workouts.at(-1)?.id}|${state.bodyweight.length}`;
+  if (rateCache?.key === key) return rateCache.value;
+  const ids = new Set(state.workouts.flatMap(w => w.exercises.map(e => e.exId)));
+  const pointsByLift = [...ids].map(id => {
+    const ex = exercise(id);
+    return historyFor(id)
+      .filter(h => workingSets(h).length && !h.deload)
+      .map(h => ({ t: new Date(h.date).getTime() / DAY, e1rm: sessionE1RM(h, ex, bodyweightOn(h.date)), f: h.fatigue }));
+  });
+  rateCache = { key, value: personalFatigueRate(pointsByLift) };
+  return rateCache.value;
+}
+
 function suggestionFor(ex, fatigue = 0) {
-  let sug = suggest(ex, historyFor(ex.id), { increment: increment(ex), bodyweight: bodyweightOn(), fatigue });
+  let sug = suggest(ex, historyFor(ex.id), { increment: increment(ex), bodyweight: bodyweightOn(), fatigue, fatigueRate: personalRate().rate });
   if (sug && inDeload()) {
     const inc = increment(ex);
     sug = { ...sug, weight: Math.max(0, Math.round((sug.weight * 0.85) / inc) * inc), est: 0, kind: 'deload', reason: 'Deload week — about 15% lighter so you recover and come back stronger.' };
@@ -906,10 +925,34 @@ function progressLifts() {
   <div class="section-title">Strength level</div>
   <div class="card">${strength}</div>
 
+  <div class="section-title">Fatigue profile</div>
+  <div class="card">${fatigueProfile()}</div>
+
   <div class="section-title">Personal records</div>
   <div class="card pr-list">
     ${prs.map(p => `<div class="pr"><span>${esc(p.x.name)}</span><span class="muted">${esc(weightLabel(p.x, p.heavy.weight))} × ${p.heavy.reps}${p.best ? ` · <b>${Math.round(p.best)}</b> e1RM` : ''}</span></div>`).join('')}
   </div>`;
+}
+
+// What the app has learned about how fast this lifter tires within a workout.
+function fatigueProfile() {
+  const p = personalRate();
+  // Drop after a big block of related work (about 16 sets of helper-muscle work).
+  const drop = r => Math.round((1 - fatigueFactor(10, r)) * 100);
+  const yours = drop(p.rate);
+  const avg = drop(DEFAULT_FATIGUE_RATE);
+  if (!p.lifts) {
+    return `<p class="muted small" style="margin:0">Still learning. Do lifts at different points in your workouts (early one day, later another) and the app works out how fast you tire. Until then it assumes an average rate (about −${avg}% after a big block of related sets).</p>`;
+  }
+  const ratio = p.rate / DEFAULT_FATIGUE_RATE;
+  const label = ratio < 0.8 ? 'You hold strength well when tired 💪' : ratio > 1.2 ? 'You tire faster than average' : 'About average';
+  return `
+    <div class="lvl-top"><b>${label}</b><span class="lvl-badge l3">−${yours}%</span></div>
+    <div class="fp-bars">
+      <div><span>You</span><div><i style="width:${Math.min(100, yours * 3)}%"></i></div><b>−${yours}%</b></div>
+      <div class="avg"><span>Average</span><div><i style="width:${Math.min(100, avg * 3)}%"></i></div><b>−${avg}%</b></div>
+    </div>
+    <p class="muted small" style="margin:8px 0 0">Strength lost after a big block of related sets. Learned from ${p.lifts} lift${p.lifts > 1 ? 's' : ''} (${p.sessions} sessions). New lifts start from your number.</p>`;
 }
 
 function progressAwards() {
@@ -1063,6 +1106,7 @@ function renderTabs() {
 function render(animate = false) {
   const views = { workout: viewWorkout, history: viewHistory, progress: viewProgress, health: viewHealth };
   const view = $('#view');
+  rateCache = null; // history edits can change what's been learned
   view.innerHTML = views[ui.tab]();
   if (animate) {
     const items = view.querySelectorAll(':scope > *, .active > *, .days > *');

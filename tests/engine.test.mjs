@@ -172,3 +172,23 @@ test('learns a steeper personal fatigue rate from varied positions', async () =>
   assert.ok(r > DEFAULT_FATIGUE_RATE + 0.005, `rate ${r}`);
   assert.equal(learnFatigueRate(pts.slice(0, 3)), DEFAULT_FATIGUE_RATE);
 });
+
+test('personal fatigue rate pools lifts and becomes the starting point', async () => {
+  const { personalFatigueRate, learnFatigueRate, DEFAULT_FATIGUE_RATE } = await import('../js/engine.js');
+  // Two lifts, both ~2.5% weaker per fatigue point.
+  const lift = base => [0, 8, 2, 10, 4, 12, 1, 9].map((f, i) => ({ t: i * 3, f, e1rm: base * (1 - 0.025 * f) }));
+  const p = personalFatigueRate([lift(100), lift(60), [{ t: 0, f: 0, e1rm: 50 }]]);
+  assert.equal(p.lifts, 2);
+  assert.ok(p.rate > DEFAULT_FATIGUE_RATE + 0.005, `rate ${p.rate}`);
+  // A lift without varied sessions starts from the personal rate, not the default.
+  assert.equal(learnFatigueRate([{ t: 0, f: 0, e1rm: 50 }], p.rate), p.rate);
+  // No usable data: default.
+  assert.equal(personalFatigueRate([]).rate, DEFAULT_FATIGUE_RATE);
+});
+
+test('suggest uses the personal rate for a lift with no varied history', () => {
+  const h = [{ date: daysAgo(3), fatigue: 0, sets: sets(30, [12, 11, 10]) }];
+  const slow = suggest(curl, h, { increment: 5, now: NOW, fatigue: 10, fatigueRate: 0.005 });
+  const fast = suggest(curl, h, { increment: 5, now: NOW, fatigue: 10, fatigueRate: 0.025 });
+  assert.ok(slow.est > fast.est, 'someone who tires slowly gets a smaller cut');
+});
