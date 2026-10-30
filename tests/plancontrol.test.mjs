@@ -549,3 +549,52 @@ test('the week ahead works across a daylight-saving change', async () => {
     }
   }
 });
+
+test('weekly sets card: your case — plan made Friday after a Wednesday leg day', async () => {
+  const { weekVolume } = await import('../js/plancontrol.js');
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5], minutes: 120 };
+  const legDay = [['squat', 4], ['rdl', 5], ['lying_leg_curl', 4], ['seated_leg_curl', 4], ['leg_press', 3]].filter(([id]) => lookup(id));
+  const ws = [offPlan('a', MONDAY + 2 * DAY, legDay), offPlan('b', MONDAY + 3 * DAY, upperDay), offPlan('c', MONDAY + 4 * DAY, upperDay)];
+  const fri = MONDAY + 4 * DAY + 12 * 3600000;
+  const plan = createPlan({ profile: p6, splitId: 'upper_lower', exercises: EXERCISES, workouts: ws, lookup, now: fri });
+  const week = currentWeek(plan, ws, lookup, fri);
+  const v = weekVolume(week, ws, lookup);
+  const hamDone = legDay.filter(([id]) => lookup(id).muscle === 'hamstrings').reduce((a, [, n]) => a + n, 0);
+  assert.equal(v.hamstrings.done, hamDone, 'Wednesday hamstring sets are counted');
+  const sat = week.days[5];
+  const hamPlanned = sat.session.items.filter(i => i.muscle === 'hamstrings').reduce((a, i) => a + i.sets, 0);
+  assert.equal(v.hamstrings.planned, hamPlanned, "Saturday's planned hamstring sets are counted");
+  assert.equal(v.hamstrings.goal, 20, 'the usual weekly goal, not a shrunken one');
+  assert.ok(v.hamstrings.goal >= hamPlanned, 'goal is never below one planned session');
+});
+
+test('weekly sets card: done + planned stays steady as the week goes to plan', async () => {
+  const { weekVolume } = await import('../js/plancontrol.js');
+  const plan = fresh({ ...profile, days: [0, 1, 2, 3, 4, 5] }, 'upper_lower', MONDAY - 7 * DAY);
+  const ws = [];
+  const start = weekVolume(currentWeek(plan, ws, lookup, MONDAY), ws, lookup);
+  for (const m of ['chest', 'back', 'quads', 'hamstrings']) {
+    assert.equal(start[m].done, 0);
+    assert.ok(Math.abs(start[m].planned - start[m].goal) <= Math.max(2, start[m].goal * 0.15), `${m}: planned ${start[m].planned} vs goal ${start[m].goal}`);
+  }
+  for (let d = 0; d < 6; d++) {
+    const t = MONDAY + d * DAY + 9 * 3600000;
+    const day = todayOf(currentWeek(plan, ws, lookup, t), t);
+    ws.push(doSession(plan, day, t));
+    const v = weekVolume(currentWeek(plan, ws, lookup, t + 3600000), ws, lookup);
+    for (const m of Object.keys(start)) {
+      assert.ok(Math.abs((v[m].done + v[m].planned) - (start[m].done + start[m].planned)) <= 2, `day ${d} ${m}: ${v[m].done}+${v[m].planned} vs ${start[m].planned}`);
+    }
+  }
+  const end = weekVolume(currentWeek(plan, ws, lookup, MONDAY + 6 * DAY), ws, lookup);
+  for (const v of Object.values(end)) assert.equal(v.planned, 0);
+});
+
+test('weekly sets card only counts this calendar week', async () => {
+  const { weekVolume } = await import('../js/plancontrol.js');
+  const plan = fresh();
+  const lastSunday = offPlan('x', MONDAY - DAY, lowerDay);
+  const nextMonday = offPlan('y', MONDAY + 7 * DAY, lowerDay);
+  const v = weekVolume(currentWeek(plan, [lastSunday, nextMonday], lookup, MONDAY), [lastSunday, nextMonday], lookup);
+  assert.equal(v.quads.done, 0);
+});

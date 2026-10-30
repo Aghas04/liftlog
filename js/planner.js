@@ -286,7 +286,7 @@ function splitSets(total, k) {
 }
 
 // Indirect (half-weight) sets an exercise gives each muscle other than its own.
-function indirectByMuscle(ex) {
+export function indirectByMuscle(ex) {
   const out = {};
   for (const [r, w] of Object.entries(exerciseRegions(ex))) {
     const m = REGIONS[r].muscle;
@@ -466,6 +466,8 @@ export function planWeek(input) {
   // the remaining sessions (never above the per-session cap).
   let targets = weeklyTargets(profile, plan.volume, secPerSet);
   const ease = plan.easeWeek && String(plan.easeWeek) === wk ? 0.7 : 1;
+  // The usual weekly goal per muscle (before any mid-week-start scaling).
+  const goals = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * ease)]));
   // Smallest useful dose per session: half of a normal session's share, at
   // least 2 sets. Extra workouts during the week never shrink a planned
   // session below this.
@@ -509,9 +511,14 @@ export function planWeek(input) {
     for (const m of muscles) {
       const idx = order.map((o, i) => (PLAN_DAYS[o.type].muscles.includes(m) ? i : -1)).filter(i => i >= 0);
       if (!idx.length) continue;
-      const share = remaining[m] / idx.length;
+      // Split the remaining sets exactly (9 over 2 sessions = 5 + 4), so the
+      // week adds up to its goal instead of drifting with per-session rounding.
+      const total = Math.round(remaining[m]);
+      const base = Math.floor(total / idx.length);
+      let extra = total - base * idx.length;
       for (const i of idx) {
-        let s = Math.min(PER_SESSION_CAP, Math.round(share));
+        let s = Math.min(PER_SESSION_CAP, base + (extra > 0 ? 1 : 0));
+        if (extra > 0) extra--;
         if (s > 0 && s < 2) s = 2;
         s = Math.max(s, minSets[m] || 0);
         perSession[i][m] = s;
@@ -563,7 +570,7 @@ export function planWeek(input) {
   }
   if (missed) notes.push(`${missed} missed day${missed > 1 ? 's' : ''} this week: the rotation picks up where you left off and the remaining days carry a bit more volume`);
   if (order.length && sessionsWith('quads').length === 0 && sessionsWith('chest').length === 0) notes.push('Rest of the week is light');
-  return { weekStart: ws, days: out, notes, targets };
+  return { weekStart: ws, days: out, notes, targets, goals };
 }
 
 /**

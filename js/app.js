@@ -10,7 +10,7 @@ import {
 } from './engine.js';
 import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter } from './planner.js';
 import {
-  createPlan, blockedLifts, maintainPlan, currentWeek, upcomingDays, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
+  createPlan, blockedLifts, maintainPlan, currentWeek, upcomingDays, weekVolume, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
   unexclude, dropFromBlock, sessionEntries, runReview, approveReview, postponeReview, reviewDue, isPaused, blockWeek,
   replacementFor, swapOptions, STRENGTH_ZONE,
 } from './plancontrol.js';
@@ -1430,9 +1430,14 @@ function viewPlan() {
     return `${divider}<${tag} class="plan-day ${d.kind} ${isToday ? 'today' : ''} ${d.week ? 'ahead' : ''}" style="--c:${color}" ${attrs}>${when}<div class="pd-body">${body}</div>${attrs ? `<span class="pd-go">›</span>` : ''}</${tag}>`;
   }).join('');
   // Weekly sets per muscle: planned target vs done so far.
-  const done = muscleSets(state.workouts, exercise, new Date(week.weekStart).toISOString());
-  const vol = Object.entries(week.targets || {}).filter(([, t]) => t > 0)
-    .map(([m, t]) => `<div class="vol-row"><span>${MUSCLES[m]}</span><div class="vol-bar"><i style="width:${Math.min(100, ((done[m] || 0) / t) * 100)}%"></i></div><small>${Math.round(done[m] || 0)}/${t}</small></div>`).join('');
+  // This calendar week: done so far (any workout) + still planned, vs the usual goal.
+  const wv = weekVolume(week, state.workouts, exercise);
+  const pct = (v, g) => Math.min(100, (v / g) * 100);
+  const vol = Object.entries(wv).filter(([, v]) => v.goal > 0)
+    .map(([m, v]) => `<div class="vol-row"><span>${MUSCLES[m]}</span>
+      <div class="vol-bar"><i style="width:${pct(v.done, v.goal)}%"></i><i class="planned" style="width:${Math.max(0, Math.min(100 - pct(v.done, v.goal), pct(v.planned, v.goal)))}%"></i></div>
+      <small>${v.done + v.planned}/${v.goal}</small><em>${v.done} done · ${v.planned} planned</em></div>`).join('');
+  const partial = week.notes.some(n => /mid-week/.test(n));
   return `
   <div class="top"><div><div class="eyebrow">Block ${plan.blockNo || 1} · week ${bw} of ${plan.blockWeeks || 5}</div><h1 class="plan-title">${esc(split.name)}</h1></div>
     <button class="icon-btn" data-act="settings" aria-label="Settings">${ICON.gear}</button></div>
@@ -1441,7 +1446,9 @@ function viewPlan() {
   ${tIdx ? `<p class="pd-hint">Today and the 6 days after it. Scroll up for earlier days.</p>` : ''}
   <div class="plan-week scroller" id="planScroll">${rows}</div>
   ${week.notes.length ? `<div class="plan-notes">${week.notes.map(n => `<p>ℹ️ ${esc(n)}</p>`).join('')}</div>` : ''}
-  ${vol ? `<details class="card vol-card"><summary>Weekly sets per muscle</summary>${vol}<p class="muted small">Direct sets count fully; small muscles also count half of the work they get from bigger lifts.</p></details>` : ''}
+  ${vol ? `<details class="card vol-card"><summary>Sets per muscle this week</summary>
+    <p class="muted small">Mon–Sun. Solid = done in any workout, light = still planned, out of your usual weekly goal.${partial ? ' Your plan started mid-week, so this week ends below the goal.' : ''}</p>${vol}
+    <p class="muted small">Small muscles also count half of the sets they get from bigger lifts (triceps from presses, for example).</p></details>` : ''}
   <div class="plan-actions">
     <button class="btn" data-act="planDaysSheet">📅 Change days this week</button>
     ${paused ? '' : `<button class="btn" data-act="planPauseSheet">⏸️ Pause plan</button>`}

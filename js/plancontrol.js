@@ -3,7 +3,8 @@
 // session into workout entries. Pure functions: they take and return plain
 // objects, the app does the saving.
 import { REGIONS, exerciseRegions, primaryRegion, allowedBy } from './data.js';
-import { buildBlock, planWeek, reviewBlock, applyReview, rotationOffsetFor, PLAN_DAYS, splitById } from './planner.js';
+import { buildBlock, planWeek, reviewBlock, applyReview, rotationOffsetFor, indirectByMuscle, PLAN_DAYS, MAJOR, splitById } from './planner.js';
+import { workingSets } from './engine.js';
 import { DIRECT, weekKey } from './insights.js';
 
 const DAY = 86400000;
@@ -136,6 +137,34 @@ export function upcomingDays(plan, workouts, lookup, now = Date.now(), secPerSet
   const todayIndex = (new Date(now).getDay() + 6) % 7;
   const days = [...thisWeek.days.map(d => ({ ...d, week: 0 })), ...nextWeek.days.slice(0, todayIndex).map(d => ({ ...d, week: 1 }))];
   return { days, todayIndex, thisWeek, nextWeek };
+}
+
+/**
+ * Sets per muscle for one calendar week (Mon-Sun): done in any workout so far,
+ * plus what's still planned, against the usual weekly goal. Counted the way
+ * the planner counts: each set for its own muscle, and small muscles also get
+ * half credit for indirect work from bigger lifts.
+ * Returns { [muscle]: { done, planned, goal } }.
+ */
+export function weekVolume(week, workouts, lookup) {
+  const out = {};
+  for (const [m, g] of Object.entries(week.goals || {})) if (g > 0) out[m] = { done: 0, planned: 0, goal: g };
+  const add = (m, key, v) => { (out[m] ||= { done: 0, planned: 0, goal: 0 })[key] += v; };
+  const credit = (exId, n, key) => {
+    const ex = lookup(exId);
+    add(ex.muscle, key, n);
+    for (const [m, w] of Object.entries(indirectByMuscle(ex))) if (!MAJOR.includes(m)) add(m, key, w * n);
+  };
+  const end = new Date(week.weekStart);
+  end.setDate(end.getDate() + 7);
+  for (const w of workouts) {
+    const t = new Date(w.date).getTime();
+    if (t < week.weekStart || t >= end.getTime()) continue;
+    for (const e of w.exercises) { const n = workingSets(e).length; if (n) credit(e.exId, n, 'done'); }
+  }
+  for (const d of week.days) if (d.kind === 'train') for (const it of d.session.items) credit(it.exId, it.sets, 'planned');
+  for (const v of Object.values(out)) { v.done = Math.round(v.done); v.planned = Math.round(v.planned); }
+  return out;
 }
 
 /** Today's day in the week plan, or null. */
