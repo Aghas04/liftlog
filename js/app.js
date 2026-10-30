@@ -1,4 +1,5 @@
-import { MUSCLES, EQUIPMENT } from './data.js';
+import { MUSCLES, EQUIPMENT, REGIONS, CUSTOM_SPLIT, regionsOf, exerciseRegions, primaryRegion } from './data.js';
+import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion } from './builder.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
   dayType, visibleSplits,
@@ -7,7 +8,10 @@ import {
   suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
   personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE,
 } from './engine.js';
-import { recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets } from './insights.js';
+import {
+  recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets,
+  regionSets, regionTargets, regionLastDirect, neglectedRegions, DIRECT,
+} from './insights.js';
 import { listPhotos, photoBlob, addPhoto, deletePhoto } from './photos.js';
 import { workoutCard, shareOrDownload } from './share.js';
 import { readHealthExport } from './healthimport.js';
@@ -197,16 +201,18 @@ function setsSummary(ex, sets) {
 const FEEL = { easy: 'Easy', hard: 'Hard', too_hard: 'Too hard' };
 
 // ---------- Workout actions ----------
-// `from` is a past workout or a template: its exercises (and supersets) are copied in order.
-function startWorkout(dayId, from, template) {
+// `from` is a past workout or a template: its exercises (and supersets) are
+// copied in order. An exercise with `sets` (built workouts) gets that many.
+function startWorkout(dayId, from, template, name) {
   state.activeWorkout = {
     id: uid(), dayType: dayId, startedAt: new Date().toISOString(), exercises: [], timer: null,
-    ...(template ? { templateId: template.id, templateName: template.name } : {}),
+    ...(template ? { templateId: template.id, templateName: template.name } : name ? { templateName: name } : {}),
   };
   const groups = {};
   for (const e of from?.exercises || []) {
     const entry = buildEntry(e.exId, null, fatigueFor(e.exId, state.activeWorkout.exercises.length));
     if (e.group) entry.group = groups[e.group] ||= uid();
+    if (e.sets > 0) resizeSets(entry, e.sets);
     state.activeWorkout.exercises.push(entry);
   }
   save();
@@ -214,6 +220,27 @@ function startWorkout(dayId, from, template) {
   closeSheet();
   render(true);
   window.scrollTo(0, 0);
+}
+
+// Set an exercise entry to exactly n working sets. Extra sets continue the
+// suggestion's rep pattern for their position.
+function resizeSets(entry, n) {
+  const ex = exercise(entry.exId);
+  const warm = entry.sets.filter(s => s.warmup);
+  const work = entry.sets.filter(s => !s.warmup).slice(0, n);
+  while (work.length < n) {
+    const prev = work.at(-1) || { weight: null, target: null };
+    const reps = entry.suggestion && prev.weight != null ? targetFor(entry.suggestion, ex, prev.weight, work.length, bodyweightOn()) : null;
+    work.push({ weight: prev.weight ?? null, reps: null, target: reps ? { weight: prev.weight, reps } : prev.target ? { ...prev.target } : null, done: false });
+  }
+  entry.sets = [...warm, ...work];
+}
+
+// Neglected muscle regions, most urgent first, honoring snoozes and opt-outs.
+function neglectList() {
+  return neglectedRegions(state.workouts, exercise, {
+    ignored: state.settings.ignoredRegions, snoozed: state.settings.neglectSnooze, weeklyTarget: state.settings.weeklyTarget,
+  });
 }
 
 const inDeload = () => !!state.settings.deloadUntil && Date.now() < new Date(state.settings.deloadUntil).getTime();
@@ -294,7 +321,8 @@ function finishWorkout() {
     .filter(e => e.sets.length);
   const saved = {
     id: w.id, dayType: w.dayType, date: w.startedAt, finishedAt: new Date().toISOString(), exercises,
-    ...(w.templateId ? { templateId: w.templateId, templateName: w.templateName } : {}),
+    ...(w.templateId ? { templateId: w.templateId } : {}),
+    ...(w.templateName ? { templateName: w.templateName } : {}),
   };
   state.workouts.push(saved);
   state.workouts.sort((a, b) => a.date.localeCompare(b.date));
@@ -643,6 +671,7 @@ function viewWorkout() {
       </div>
       ${w.exercises.map((_, i) => exCard(w, 'active', i, true)).join('')}
       ${w.exercises.length ? '' : `<div class="empty"><div class="big-ico">${dt.icon}</div>Add your first exercise to get started.</div>`}
+      ${workoutTipHtml(w, dt)}
       <button class="btn primary day" data-act="picker">+ Add exercise</button>
       ${w.exercises.length ? `<button class="btn ghost" style="margin-top:10px" data-act="saveTplSheet">💾 Save as template</button>` : ''}
     </div>`;
@@ -663,6 +692,7 @@ function viewWorkout() {
   }).join('');
   const splits = visibleSplits();
   const pick = splits.length ? recommendSplit(state.workouts, exercise, splits) : null;
+  const neglect = neglectList();
   const pickHtml = !pick ? '' : pick.rest
     ? `<div class="pick-card rest"><span class="day-ico">😴</span><div class="pick-txt"><small>Today</small><b>Rest day</b><span>${esc(pick.reason)}</span></div></div>`
     : `<button class="pick-card" style="--c:${pick.day.color}" data-act="start" data-day="${pick.day.id}">
@@ -685,6 +715,11 @@ function viewWorkout() {
   ${needsBackup ? `<div class="banner"><div>It's been a while since your last backup.</div><button data-act="export">Back up</button></div>` : ''}
   ${deloadBanner()}
   ${pickHtml}
+  <button class="pick-card build-card" style="--c:${CUSTOM_SPLIT.color}" data-act="buildSheet">
+    <span class="day-ico">${CUSTOM_SPLIT.icon}</span>
+    <div class="pick-txt"><small>Custom</small><b>Build today's workout</b><span>Choose the volume, it picks the lifts${neglect[0] ? ` and covers ${esc(neglect[0].name.toLowerCase())}` : ''}.</span></div>
+    <span class="go">${ICON.arrow}</span></button>
+  ${attentionHtml(neglect.slice(0, 3))}
   <div class="section-title row-title"><span>${pick?.day ? 'Or pick any split' : 'Pick today’s split'}</span><button data-act="splitsSheet">Edit splits</button></div>
   <div class="days">
     ${splits.length ? '' : `<button class="btn ghost" data-act="splitEdit">+ Add your first split</button>`}
@@ -698,6 +733,35 @@ function viewWorkout() {
           <span class="when">${l ? `Last done ${relDays(l.date)}` : 'Not done yet'}${n ? ` · ${n} template${n > 1 ? 's' : ''}` : ''}</span></div>
         <span class="go">${ICON.arrow}</span></button>`;
     }).join('')}
+  </div>`;
+}
+
+// Home card listing neglected regions, each with snooze and opt-out.
+function attentionHtml(list) {
+  if (!list.length) return '';
+  return `<div class="card attn">
+    <div class="attn-head">⚠️ Needs attention</div>
+    ${list.map(n => `<div class="attn-row">
+      <div class="attn-txt"><b>${esc(n.name)}</b><small>${esc(n.reason)}</small></div>
+      <button data-act="snoozeRegion" data-r="${n.region}">Snooze</button>
+      <button class="muted" data-act="ignoreRegion" data-r="${n.region}">Don't track</button>
+    </div>`).join('')}
+  </div>`;
+}
+
+// One gentle tip per workout: a neglected region this workout's split can
+// train that no lift in the workout covers yet, with a one-tap add.
+function workoutTipHtml(w, dt) {
+  if (w.tipDismissed) return '';
+  const covered = new Set();
+  for (const e of w.exercises) for (const [r, wt] of Object.entries(exerciseRegions(exercise(e.exId)))) if (wt >= DIRECT) covered.add(r);
+  const n = neglectList().find(x => !covered.has(x.region) && dt.muscles.includes(x.muscle));
+  if (!n) return '';
+  const ex = exerciseForRegion(n.region, allExercises(), usageCounts());
+  if (!ex) return '';
+  return `<div class="tip">
+    <div>💡 <b>${esc(n.name)}</b>: ${esc(n.reason.charAt(0).toLowerCase() + n.reason.slice(1))}. Add ${esc(ex.name)}?</div>
+    <div class="banner-btns"><button data-act="tipAdd" data-id="${ex.id}">Add</button><button class="muted" data-act="tipDismiss" aria-label="Dismiss tip">✕</button></div>
   </div>`;
 }
 
@@ -836,18 +900,16 @@ function progressOverview() {
       <div><b>${r.prSets}</b><span>PR sets</span></div>
     </div>
     ${r.improved ? `<div class="recap-line">📈 Most improved: <b>${esc(exercise(r.improved.exId).name)}</b> +${(r.improved.gain * 100).toFixed(1)}% <span class="muted">(${Math.round(r.improved.from)} → ${Math.round(r.improved.to)} lb e1RM)</span></div>` : ''}
-    ${fav ? `<div class="recap-line">${fav.icon} Favorite split: <b>${esc(fav.name)}</b></div>` : ''}`
+    ${fav ? `<div class="recap-line">${fav.icon} Favorite split: <b>${esc(fav.name)}</b></div>` : ''}
+    ${barelyTrained(m, r.workouts)}`
     : `<p class="muted small" style="margin:6px 0 0">No workouts this month.</p>`}
   </div>`;
 
   // Weekly set targets
   const sets = muscleSets(state.workouts, exercise, new Date(Date.now() - 7 * DAY).toISOString());
   const target = state.settings.weeklyTarget;
-  const bars = Object.entries(MUSCLES).map(([k, name]) => {
-    const n = sets[k] || 0;
-    return `<div class="tbar ${n >= target ? 'hit' : n === 0 ? 'zero' : ''}"><span>${name}</span><div><i style="width:${Math.min(1, n / target) * 100}%"></i></div><b>${n}/${target}</b></div>`;
-  }).join('');
   const behind = Object.entries(MUSCLES).filter(([k]) => (sets[k] || 0) < target / 2).map(([, n]) => n);
+  const neglect = neglectList();
 
   return `
   <div class="stats">
@@ -860,12 +922,52 @@ function progressOverview() {
   <div class="section-title">Monthly recap</div>
   ${recap}
 
+  ${neglect.length ? `<div class="section-title">Needs attention</div>${attentionHtml(neglect.slice(0, 5))}` : ''}
+
   <div class="section-title">Weekly sets · last 7 days</div>
   <div class="card mm-card">
     ${muscleMap(sets)}
-    <div class="tbars">${bars}</div>
-    <p class="muted small" style="margin:10px 0 0">Goal: ${target} sets per muscle a week (change in Settings).${behind.length ? ` Behind: ${behind.join(', ')}.` : ' Every muscle is on track 💪'}</p>
+    <div class="tbars">${regionRows(sets, target, neglect)}</div>
+    <p class="muted small" style="margin:10px 0 0">Tap a muscle to see its parts. Goal: ${target} sets per muscle a week (change in Settings).${behind.length ? ` Behind: ${behind.join(', ')}.` : ' Every muscle is on track 💪'}</p>
   </div>`;
+}
+
+// Recap line: tracked regions that got under one set's worth of work all month.
+function barelyTrained(monthStart, workoutCount) {
+  if (workoutCount < 4) return '';
+  const start = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1).toISOString();
+  const end = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 1).toISOString();
+  const r = regionSets(state.workouts, exercise, start, end);
+  const ignored = new Set(state.settings.ignoredRegions);
+  const low = Object.keys(REGIONS).filter(x => !ignored.has(x) && (r[x] || 0) < 1).map(x => REGIONS[x].name);
+  return low.length ? `<div class="recap-line">🔍 Barely trained: <b>${esc(low.slice(0, 3).join(', '))}</b>${low.length > 3 ? ` +${low.length - 3} more` : ''}</div>` : '';
+}
+
+// Muscle bars that open into their regions: effective sets this week vs the
+// region's share of the target, and when it last got direct work.
+function regionRows(sets, target, neglect) {
+  const weekAgo = new Date(Date.now() - 7 * DAY).toISOString();
+  const rSets = regionSets(state.workouts, exercise, weekAgo);
+  const rTargets = regionTargets(target);
+  const last = regionLastDirect(state.workouts, exercise);
+  const flagged = new Set(neglect.map(n => n.region));
+  const ignored = new Set(state.settings.ignoredRegions);
+  const fmt1 = v => String(Math.round(v * 10) / 10);
+  return Object.entries(MUSCLES).map(([m, name]) => {
+    const n = sets[m] || 0;
+    const rs = regionsOf(m).filter(r => !ignored.has(r));
+    const flag = rs.some(r => flagged.has(r));
+    return `<details class="mrow">
+      <summary class="tbar ${n >= target ? 'hit' : n === 0 ? 'zero' : ''}"><span>${name}${flag ? '<em class="flag-dot">!</em>' : ''}</span><div><i style="width:${Math.min(1, n / target) * 100}%"></i></div><b>${n}/${target}</b></summary>
+      <div class="rbars">${rs.map(r => {
+        const v = rSets[r] || 0;
+        const t = rTargets[r];
+        const d = last[r] ? Math.floor((Date.now() - last[r]) / DAY) : null;
+        const when = d == null ? 'No direct work yet' : d === 0 ? 'Direct work today' : `Last direct work ${d} day${d > 1 ? 's' : ''} ago`;
+        return `<div class="rbar ${flagged.has(r) ? 'flag' : ''}"><span>${REGIONS[r].name}</span><div><i style="width:${Math.min(1, v / t) * 100}%"></i></div><b>${fmt1(v)}/${Math.round(t)}</b><small>${when}</small></div>`;
+      }).join('') || '<p class="muted small">All parts of this muscle are hidden (Settings → Tracked areas).</p>'}</div>
+    </details>`;
+  }).join('');
 }
 
 function progressLifts() {
@@ -1156,8 +1258,13 @@ function pickerList(query) {
   const counts = usageCounts();
   const q = query.trim().toLowerCase();
   const sortFn = (a, b) => (counts[b.id] || 0) - (counts[a.id] || 0) || a.name.localeCompare(b.name);
-  const item = ex => `<button class="pick ${added.has(ex.id) ? 'added' : ''}" data-act="pick" data-id="${ex.id}">
-    <span>${esc(ex.name)}</span><span class="muted pick-eq">${added.has(ex.id) ? 'added' : `${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}`}</span></button>`;
+  const neglected = neglectList().slice(0, 5).map(n => n.region);
+  const hits = ex => neglected.find(r => (exerciseRegions(ex)[r] || 0) >= DIRECT);
+  const item = ex => {
+    const r = hits(ex);
+    return `<button class="pick ${added.has(ex.id) ? 'added' : ''}" data-act="pick" data-id="${ex.id}">
+    <span>${esc(ex.name)}${r ? `<em class="hit-tag">Hits ${esc(REGIONS[r].name.toLowerCase())}</em>` : ''}</span><span class="muted pick-eq">${added.has(ex.id) ? 'added' : `${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}`}</span></button>`;
+  };
   if (q) {
     const hits = allExercises().filter(e => e.name.toLowerCase().includes(q)).sort(sortFn);
     return (hits.map(item).join('') || `<div class="empty">No match. Create it as a custom exercise.</div>`);
@@ -1170,6 +1277,31 @@ function pickerList(query) {
     return list.length ? `<div class="pick-group"><h4>${MUSCLES[m]}<span class="${n >= target ? 'ok' : ''}">${n}/${target} sets this week</span></h4>${list.map(item).join('')}</div>` : '';
   }).join('');
 }
+
+// Builder settings live here so they survive closing and reopening the sheet.
+ui.build = { mode: 'auto', unit: 'sets', sets: 18, minutes: 60, muscles: [], seed: 0, error: null, plan: null, budget: 0 };
+
+function buildBudget() {
+  const b = ui.build;
+  return b.unit === 'sets' ? b.sets : setsForMinutes(b.minutes, paceFromHistory(state.workouts, state.settings.defaultRest));
+}
+
+function runBuild() {
+  const b = ui.build;
+  const budget = buildBudget();
+  const plan = buildWorkout({
+    workouts: state.workouts, lookup: exercise, exercises: allExercises(), budget, mode: b.mode, muscles: b.muscles,
+    weeklyTarget: state.settings.weeklyTarget, ignored: state.settings.ignoredRegions, snoozed: state.settings.neglectSnooze,
+    seed: b.seed, usage: usageCounts(),
+  });
+  if (plan.error) { b.error = plan; b.plan = null; openSheet({ type: 'build' }); return; }
+  b.error = null;
+  b.plan = plan;
+  b.budget = budget;
+  openSheet({ type: 'buildPreview' });
+}
+
+const regionOptions = muscle => `<option value="">Whole muscle</option>${regionsOf(muscle).map(r => `<option value="${r}">${REGIONS[r].name}</option>`).join('')}`;
 
 const SPLIT_ICONS = ['💪', '🦵', '🏋️', '🔥', '⚡', '🎯', '🦍', '🚀', '🧱', '🏃', '🤸', '⭐'];
 const SPLIT_COLORS = ['#9b8cff', '#ff9447', '#3ed4ff', '#ff5f9e', '#c4f542', '#ffc24b', '#5ee0a0', '#ff5f6d'];
@@ -1185,6 +1317,72 @@ const tplExercises = w => w.exercises.map(e => ({ exId: e.exId, ...(e.group ? { 
 function sheetHtml() {
   const s = ui.sheet;
   switch (s.type) {
+    case 'build': {
+      const b = ui.build;
+      const pace = paceFromHistory(state.workouts, state.settings.defaultRest);
+      const budget = buildBudget();
+      const saved = state.templates.filter(t => t.splitId === CUSTOM_SPLIT.id);
+      const seg = (act, cur, items) => `<div class="seg">${items.map(([v, l]) => `<button data-act="${act}" data-v="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+      let err = '';
+      if (b.error?.error === 'noMuscles') err = `<div class="banner info"><div>Pick at least one muscle.</div></div>`;
+      if (b.error?.error === 'tooSmall') {
+        err = b.error.fit
+          ? `<div class="banner info"><div>${b.muscles.length} muscles need at least ${b.muscles.length * 4} sets (2 exercises × 2 sets each).</div>
+              <div class="banner-btns"><button data-act="bRaise">Raise to ${b.muscles.length * 4} sets</button><button data-act="bKeepTop">Keep top ${b.error.fit}</button></div></div>`
+          : `<div class="banner info"><div>A workout needs at least 4 sets.</div></div>`;
+      }
+      return `<h2>${CUSTOM_SPLIT.icon} Build today's workout</h2>
+        <div class="field"><span>Muscles</span>${seg('bMode', b.mode, [['auto', 'Auto'], ['pick', 'Pick muscles']])}</div>
+        ${b.mode === 'auto'
+          ? `<p class="muted small" style="margin-top:-4px">Picks what you need most today: muscles behind on weekly sets, neglected areas, and how rested you are.</p>`
+          : `<div class="chips">${Object.entries(MUSCLES).map(([k, n]) => `<button data-act="bMuscle" data-v="${k}" class="${b.muscles.includes(k) ? 'on' : ''}">${n}</button>`).join('')}</div>`}
+        <div class="field"><span>Volume</span>${seg('bUnit', b.unit, [['sets', 'Sets'], ['min', 'Minutes']])}</div>
+        <div class="plates-weight">
+          <button data-act="bStep" data-d="-1" aria-label="Less">−</button>
+          <div><b>${b.unit === 'sets' ? b.sets : b.minutes}</b><span>${b.unit === 'sets' ? 'working sets' : 'minutes'}</span></div>
+          <button data-act="bStep" data-d="1" aria-label="More">+</button>
+        </div>
+        <p class="muted small" style="text-align:center">${b.unit === 'min' ? `≈ ${budget} sets at your pace (${pace}s per set)` : `≈ ${Math.round((budget * pace) / 60)} min at your pace`}</p>
+        ${err}
+        <button class="btn primary" data-act="doBuild">Build workout</button>
+        ${saved.length ? `<div class="section-title">Saved builds</div><div class="tpl-list">${saved.map(t => `
+          <div class="tpl" style="--c:${CUSTOM_SPLIT.color}">
+            <button class="tpl-main" data-act="startTemplate" data-id="${t.id}"><b>${esc(t.name)}</b><small>${t.exercises.length} exercises · ${esc(t.exercises.map(e => exercise(e.exId).name).join(', '))}</small></button>
+            <button class="tpl-edit" data-act="tplEdit" data-id="${t.id}">Edit</button>
+          </div>`).join('')}</div>` : ''}`;
+    }
+    case 'buildPreview': {
+      const p = ui.build.plan;
+      const pace = paceFromHistory(state.workouts, state.settings.defaultRest);
+      const rows = p.items.map((it, i) => {
+        const ex = exercise(it.exId);
+        const sug = suggestionFor(ex);
+        const load = sug ? `${weightLabel(ex, sug.weight)} × ${sug.reps[0]}` : 'new — find your weight';
+        return `<div class="bp-row">
+          <div class="bp-main">
+            <span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[it.muscle]}</span>
+            <b>${esc(ex.name)}</b>
+            <small>${it.sets} sets · ${esc(load)}</small>
+            <small class="bp-why">${esc(it.reason)}${it.isNew ? ' · new for you' : ''}</small>
+          </div>
+          <div class="bp-tools"><button data-act="bpSwap" data-i="${i}" aria-label="Swap exercise">↻</button><button data-act="bpRemove" data-i="${i}" aria-label="Remove exercise">✕</button></div>
+        </div>`;
+      }).join('');
+      const short = p.totalSets < ui.build.budget
+        ? `<p class="muted small">Only ${p.totalSets} of ${ui.build.budget} sets fit: those muscles ran out of exercises.</p>` : '';
+      return `<h2>Today's workout</h2>
+        <p class="muted small" style="margin-top:-6px">${p.totalSets} sets · ≈ ${Math.round((p.totalSets * pace) / 60)} min · ${esc(p.muscles.map(m => MUSCLES[m]).join(', '))}</p>
+        ${short}
+        <div class="bp-list">${rows || '<div class="empty">Everything was removed.</div>'}</div>
+        <div class="stack" style="margin-top:14px">
+          <button class="btn primary" data-act="bpStart" ${p.items.length ? '' : 'disabled style="opacity:.5"'}>Start workout</button>
+          <div class="row"><button class="btn" data-act="bpRegen">↻ Regenerate</button><button class="btn" data-act="bpBack">Change settings</button></div>
+          <div class="row" style="align-items:flex-end">
+            <label class="field" style="margin:0"><span>Save as template</span><input id="bpName" placeholder="e.g. Arms & shoulders" autocomplete="off"></label>
+            <button class="btn" style="flex:0 0 80px" data-act="bpSave">Save</button>
+          </div>
+        </div>`;
+    }
     case 'start': {
       const sp = dayType(s.day);
       const tpls = state.templates.filter(t => t.splitId === s.day);
@@ -1278,13 +1476,16 @@ function sheetHtml() {
         <input class="search" id="pickerSearch" placeholder="Search all exercises" autocomplete="off">
         <div id="pickerList">${pickerList('')}</div>
         <button class="btn ghost" style="margin-top:14px" data-act="customSheet">+ Custom exercise</button>`;
-    case 'custom':
+    case 'custom': {
+      const m0 = dayType(state.activeWorkout?.dayType)?.muscles[0] || 'chest';
       return `<h2>Custom exercise</h2>
         <label class="field"><span>Name</span><input id="cName" placeholder="e.g. Machine Pullover"></label>
-        <label class="field"><span>Muscle</span><select id="cMuscle">${Object.entries(MUSCLES).map(([k, v]) => `<option value="${k}" ${dayType(state.activeWorkout?.dayType)?.muscles[0] === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label class="field"><span>Muscle</span><select id="cMuscle">${Object.entries(MUSCLES).map(([k, v]) => `<option value="${k}" ${m0 === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        <label class="field"><span>Main area it works</span><select id="cRegion">${regionOptions(m0)}</select></label>
         <label class="field"><span>Equipment</span><select id="cEquip">${Object.entries(EQUIPMENT).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('')}</select></label>
         <label class="check-field"><input type="checkbox" id="cCompound"> Compound lift (multi-joint, 6–12 reps)</label>
         <button class="btn primary" data-act="saveCustom">Add exercise</button>`;
+    }
     case 'rest': {
       const cur = restFor(s.exId);
       return `<h2>Rest timer</h2><p class="muted">${esc(exercise(s.exId).name)}</p>
@@ -1398,6 +1599,9 @@ function sheetHtml() {
         <div class="field"><span>Accent color</span>
           <div class="swatches">${Object.entries(ACCENTS).map(([k, hex]) => `<button data-act="accent" data-v="${k}" class="${(state.settings.accent || 'lime') === k ? 'on' : ''}" style="--sw:${hex}" aria-label="${k}"></button>`).join('')}</div>
         </div>
+        ${state.settings.ignoredRegions.length ? `<div class="field"><span>Tracked areas — tap to track again</span>
+          <div class="chips">${state.settings.ignoredRegions.map(r => `<button data-act="unignoreRegion" data-r="${r}">↺ ${esc(REGIONS[r]?.name || r)}</button>`).join('')}</div>
+        </div>` : ''}
         <div class="field"><span>Weekly set target per muscle</span>
           <div class="chips">${[6, 8, 10, 12, 15, 20].map(v => `<button data-act="weeklyTarget" data-v="${v}" class="${state.settings.weeklyTarget === v ? 'on' : ''}">${v}</button>`).join('')}</div>
         </div>
@@ -1654,7 +1858,10 @@ const actions = {
   saveCustom() {
     const name = $('#cName').value.trim();
     if (!name) { $('#cName').focus(); return; }
-    const ex = { id: 'c_' + uid(), name, muscle: $('#cMuscle').value, equipment: $('#cEquip').value, compound: $('#cCompound').checked, custom: true };
+    const ex = {
+      id: 'c_' + uid(), name, muscle: $('#cMuscle').value, equipment: $('#cEquip').value, compound: $('#cCompound').checked, custom: true,
+      ...($('#cRegion').value ? { mainRegion: $('#cRegion').value } : {}),
+    };
     state.customExercises.push(ex);
     save();
     addExercise(ex.id);
@@ -1842,6 +2049,93 @@ const actions = {
 
   // Progress
   progressView(el) { ui.progressView = el.dataset.v; render(true); },
+
+  // Builder
+  buildSheet() { ui.build.error = null; openSheet({ type: 'build' }); },
+  bMode(el) { ui.build.mode = el.dataset.v; ui.build.error = null; renderSheet(); },
+  bUnit(el) { ui.build.unit = el.dataset.v; ui.build.error = null; renderSheet(); },
+  bStep(el) {
+    const b = ui.build;
+    const d = +el.dataset.d;
+    if (b.unit === 'sets') b.sets = Math.max(4, Math.min(60, b.sets + d * 2));
+    else b.minutes = Math.max(15, Math.min(180, b.minutes + d * 5));
+    b.error = null;
+    renderSheet();
+  },
+  bMuscle(el) {
+    const b = ui.build;
+    const m = el.dataset.v;
+    b.muscles = b.muscles.includes(m) ? b.muscles.filter(x => x !== m) : [...b.muscles, m];
+    b.error = null;
+    renderSheet();
+  },
+  doBuild() { ui.build.seed = 0; runBuild(); },
+  bRaise() { const b = ui.build; b.unit = 'sets'; b.sets = b.muscles.length * 4; runBuild(); },
+  bKeepTop() { const b = ui.build; b.muscles = b.error.ranked.slice(0, b.error.fit); runBuild(); },
+  bpRegen() { ui.build.seed += 1; runBuild(); },
+  bpBack() { openSheet({ type: 'build' }); },
+  bpSwap(el) {
+    const p = ui.build.plan;
+    const it = p.items[+el.dataset.i];
+    const inPlan = new Set(p.items.map(x => x.exId));
+    const counts = usageCounts();
+    ui.build.swapped = ui.build.swapped || {};
+    const tried = (ui.build.swapped[it.muscle] ||= new Set());
+    tried.add(it.exId);
+    // Same muscle, not already in the workout; prefer the same region, then familiar lifts.
+    let options = allExercises().filter(x => x.muscle === it.muscle && !inPlan.has(x.id) && !tried.has(x.id));
+    if (!options.length) { tried.clear(); tried.add(it.exId); options = allExercises().filter(x => x.muscle === it.muscle && !inPlan.has(x.id)); }
+    if (!options.length) { toast('No other exercises for this muscle'); return; }
+    options.sort((a, b) => ((exerciseRegions(b)[it.region] || 0) - (exerciseRegions(a)[it.region] || 0)) || ((counts[b.id] || 0) - (counts[a.id] || 0)));
+    const next = options[0];
+    Object.assign(it, { exId: next.id, region: primaryRegion(next), reason: 'Swapped in', isNew: !counts[next.id] });
+    renderSheet();
+  },
+  bpRemove(el) {
+    const p = ui.build.plan;
+    p.items.splice(+el.dataset.i, 1);
+    p.totalSets = p.items.reduce((s, x) => s + x.sets, 0);
+    p.muscles = p.muscles.filter(m => p.items.some(x => x.muscle === m));
+    renderSheet();
+  },
+  bpStart() {
+    const p = ui.build.plan;
+    if (!p?.items.length) return;
+    startWorkout(CUSTOM_SPLIT.id, { exercises: p.items.map(i => ({ exId: i.exId, sets: i.sets })) }, null, 'Built workout');
+  },
+  bpSave() {
+    const name = $('#bpName').value.trim();
+    if (!name) { toast('Give it a name'); $('#bpName').focus(); return; }
+    const p = ui.build.plan;
+    state.templates.push({ id: 't_' + uid(), splitId: CUSTOM_SPLIT.id, name, exercises: p.items.map(i => ({ exId: i.exId, sets: i.sets })) });
+    save();
+    toast(`Saved “${name}”`);
+  },
+
+  // Neglected regions
+  snoozeRegion(el) {
+    state.settings.neglectSnooze = { ...state.settings.neglectSnooze, [el.dataset.r]: new Date(Date.now() + 7 * DAY).toISOString() };
+    save();
+    toast('Snoozed for a week');
+    render();
+  },
+  ignoreRegion(el) {
+    const r = el.dataset.r;
+    withUndo(`Stopped tracking ${REGIONS[r].name.toLowerCase()}`, () => {
+      state.settings.ignoredRegions = [...new Set([...state.settings.ignoredRegions, r])];
+      save();
+    });
+    render();
+  },
+  unignoreRegion(el) {
+    state.settings.ignoredRegions = state.settings.ignoredRegions.filter(r => r !== el.dataset.r);
+    save();
+    renderSheet();
+    render();
+  },
+  // One tip per workout: adding the suggestion also retires the tip.
+  tipAdd(el) { state.activeWorkout.tipDismissed = true; addExercise(el.dataset.id); },
+  tipDismiss() { state.activeWorkout.tipDismissed = true; save(); render(); },
   range(el) {
     ui.ranges[el.dataset.k] = el.dataset.v;
     try { localStorage.setItem('liftlog.ranges', JSON.stringify(ui.ranges)); } catch { /* per-device nicety only */ }
@@ -2097,6 +2391,7 @@ function syncRow(row, s) {
 document.addEventListener('change', async ev => {
   const el = ev.target;
   if (el.dataset.field === 'progressEx') { ui.progressEx = el.value; render(); return; }
+  if (el.id === 'cMuscle') { $('#cRegion').innerHTML = regionOptions(el.value); return; }
   if (el.id === 'photoInput' && el.files[0]) {
     const file = el.files[0];
     el.value = '';

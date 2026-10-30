@@ -10,6 +10,8 @@ const FRONT = [
   ['abs', '<rect x="87" y="88" width="26" height="52" rx="7"/>'],
   ['quads', '<ellipse cx="87" cy="176" rx="12" ry="31"/><ellipse cx="113" cy="176" rx="12" ry="31"/>'],
   ['calves', '<ellipse cx="87" cy="230" rx="7" ry="17"/><ellipse cx="113" cy="230" rx="7" ry="17"/>'],
+  ['forearms', '<ellipse cx="53" cy="126" rx="6" ry="20"/><ellipse cx="147" cy="126" rx="6" ry="20"/>'],
+  ['adductors', '<ellipse cx="100" cy="170" rx="4.5" ry="19"/>'],
 ];
 
 const BACK = [

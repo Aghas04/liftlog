@@ -2,6 +2,7 @@
 //   lookup(exId) -> exercise { muscle, equipment, ... }
 //   bwOn(iso)    -> bodyweight in lb on that date, or null
 import { workingSets, sessionE1RM, sessionMissed } from './engine.js';
+import { REGIONS, MUSCLES, regionsOf, exerciseRegions } from './data.js';
 
 const DAY = 86400000;
 const startOfDay = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -121,7 +122,7 @@ export function achievements(workouts, lookup, bwOn) {
     const hour = new Date(w.date).getHours();
     if (hour < 7) early = 1;
     if (hour >= 21) night = 1;
-    splits.add(w.dayType);
+    if (w.dayType !== 'custom') splits.add(w.dayType);
     const wk = weekKey(new Date(w.date).getTime());
     perWeek[wk] = (perWeek[wk] || 0) + 1;
     for (const e of w.exercises) {
@@ -248,4 +249,96 @@ export function strengthLevels(workouts, lookup, bw, standards) {
       next: nextRatio ? { level: LEVELS[idx + 1], lb: Math.ceil(nextRatio * bw - e1rm) } : null,
     };
   }).filter(Boolean);
+}
+
+// ---------- Muscle regions ----------
+
+// A set counts as direct work for a region when the region weight is at least this.
+export const DIRECT = 0.75;
+
+/** Effective sets per region in workouts on or after sinceIso (secondary work counts partly). */
+export function regionSets(workouts, lookup, sinceIso, untilIso) {
+  const out = {};
+  for (const w of workouts) {
+    if (sinceIso && w.date < sinceIso) continue;
+    if (untilIso && w.date >= untilIso) continue;
+    for (const e of w.exercises) {
+      const n = workingSets(e).length;
+      if (!n) continue;
+      for (const [r, wt] of Object.entries(exerciseRegions(lookup(e.exId)))) out[r] = (out[r] || 0) + n * wt;
+    }
+  }
+  return out;
+}
+
+/** Timestamp of the last direct work per region. */
+export function regionLastDirect(workouts, lookup) {
+  const out = {};
+  for (const w of workouts) {
+    const t = new Date(w.date).getTime();
+    for (const e of w.exercises) {
+      if (!workingSets(e).length) continue;
+      for (const [r, wt] of Object.entries(exerciseRegions(lookup(e.exId)))) {
+        if (wt >= DIRECT && (!out[r] || t > out[r])) out[r] = t;
+      }
+    }
+  }
+  return out;
+}
+
+/** Weekly set target per region: the muscle target split by region size. */
+export function regionTargets(weeklyTarget) {
+  const out = {};
+  for (const m of Object.keys(MUSCLES)) {
+    const rs = regionsOf(m);
+    const total = rs.reduce((s, r) => s + REGIONS[r].size, 0);
+    for (const r of rs) out[r] = (weeklyTarget * REGIONS[r].size) / total;
+  }
+  return out;
+}
+
+/**
+ * Regions that are being neglected, most urgent first.
+ * Flagged when there's been no direct work for 10+ days, or the region got
+ * under a third of its share of its muscle's sets over the last 2 weeks.
+ * Needs at least a week of history. opts: { now, ignored: [], snoozed: { region: iso } }
+ */
+export function neglectedRegions(workouts, lookup, opts = {}) {
+  const now = opts.now ?? Date.now();
+  if (!workouts.length) return [];
+  const first = Math.min(...workouts.map(w => new Date(w.date).getTime()));
+  const span = (now - first) / DAY;
+  if (span < 7) return [];
+  const ignored = new Set(opts.ignored || []);
+  const snoozed = opts.snoozed || {};
+  const targets = regionTargets(opts.weeklyTarget || 10);
+  const last = regionLastDirect(workouts, lookup);
+  const two = regionSets(workouts, lookup, new Date(now - 14 * DAY).toISOString());
+  const month = regionSets(workouts, lookup, new Date(now - 28 * DAY).toISOString());
+  const out = [];
+  for (const [r, info] of Object.entries(REGIONS)) {
+    if (ignored.has(r)) continue;
+    if (snoozed[r] && new Date(snoozed[r]).getTime() > now) continue;
+    const days = last[r] ? (now - last[r]) / DAY : span;
+    const rs = regionsOf(info.muscle);
+    const size = rs.reduce((s, x) => s + REGIONS[x].size, 0);
+    const share = info.size / size;
+    const muscleSets = rs.reduce((s, x) => s + (two[x] || 0), 0);
+    const mine = two[r] || 0;
+    // No direct work only matters if indirect work isn't covering it either
+    // (e.g. heavy pressing already trains the front delts well).
+    const covered = mine >= 2 * targets[r] * 0.6;
+    const stale = days >= 10 && !covered;
+    const behind = muscleSets >= 4 && mine < (share * muscleSets) / 3;
+    if (!stale && !behind) continue;
+    // Muscles you haven't trained at all lately rank a bit lower.
+    const trainedMuscle = rs.some(x => (month[x] || 0) > 0);
+    let priority = (stale ? Math.min(days, 30) / 10 : 0) + (behind ? (1 - mine / (share * muscleSets)) * 2 : 0);
+    if (!trainedMuscle) priority *= 0.5;
+    const reason = stale
+      ? (last[r] ? `No direct work in ${Math.floor(days)} days` : 'No direct work yet')
+      : `Only ${Math.round(mine)} of ~${Math.round(share * muscleSets)} ${MUSCLES[info.muscle].toLowerCase()} sets in 2 weeks`;
+    out.push({ region: r, name: info.name, muscle: info.muscle, days, behind, stale, priority, reason });
+  }
+  return out.sort((a, b) => b.priority - a.priority);
 }

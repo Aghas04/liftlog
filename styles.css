@@ -571,3 +571,51 @@ label.btn { cursor: pointer; }
 .set-row.done.near .set-num { color: var(--warn); }
 .set-row.done.near .reps input { color: var(--warn); }
 .set-row.near .goal { color: var(--warn); }
+
+/* ---------- Builder ---------- */
+.build-card { margin-top: 10px; }
+.bp-list { display: grid; gap: 8px; }
+.bp-row { display: flex; gap: 10px; align-items: center; padding: 12px; border-radius: 14px; background: var(--surface-2); }
+.bp-main { flex: 1; min-width: 0; }
+.bp-main b { display: block; font-size: 16px; }
+.bp-main small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.bp-main .bp-why { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+.bp-main .tag { --c: var(--accent); }
+.bp-tools { display: flex; gap: 6px; flex: none; }
+.bp-tools button { width: 36px; height: 36px; border-radius: 10px; background: var(--surface); font-weight: 800; }
+
+/* ---------- Needs attention ---------- */
+.attn { margin-top: 12px; border: 1px solid rgba(255, 194, 75, 0.3); background: linear-gradient(140deg, rgba(255, 194, 75, 0.08), var(--surface) 60%); }
+.attn-head { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--warn); margin-bottom: 6px; }
+.attn-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
+.attn-row:first-of-type { border-top: 0; }
+.attn-txt { flex: 1; min-width: 0; }
+.attn-txt b { display: block; font-size: 15px; }
+.attn-txt small { display: block; font-size: 12px; color: var(--muted); }
+.attn-row button { font-size: 12px; font-weight: 800; padding: 6px 10px; border-radius: 99px; background: var(--surface-2); flex: none; }
+
+/* ---------- Workout tip ---------- */
+.tip { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; padding: 12px 14px; border-radius: 14px; font-size: 14px;
+  background: rgba(255, 194, 75, 0.08); border: 1px solid rgba(255, 194, 75, 0.25); }
+.tip button { font-weight: 800; }
+.tip button[data-act="tipAdd"] { color: var(--warn); }
+
+/* ---------- Picker tag ---------- */
+.hit-tag { display: block; font-style: normal; font-size: 11px; font-weight: 800; color: var(--warn); margin-top: 2px; }
+
+/* ---------- Region rows ---------- */
+.mrow > summary { list-style: none; cursor: pointer; grid-template-columns: 112px 1fr 44px; }
+.mrow > summary span { white-space: nowrap; }
+.mrow > summary::-webkit-details-marker { display: none; }
+.mrow > summary span::after { content: ' ›'; color: var(--muted); }
+.mrow[open] > summary span::after { content: ' ⌄'; }
+.mrow .flag-dot { font-style: normal; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 6px; border-radius: 50%; background: var(--warn); color: #3a2700; font-size: 11px; font-weight: 900; vertical-align: 1px; }
+.rbars { display: grid; gap: 8px; margin: 8px 0 6px 10px; padding-left: 10px; border-left: 2px solid var(--line); }
+.rbar { display: grid; grid-template-columns: 1fr 64px 44px; align-items: center; gap: 4px 10px; font-size: 12px; }
+.rbar > span { font-weight: 700; }
+.rbar > div { height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.rbar i { display: block; height: 100%; background: color-mix(in srgb, var(--accent) 60%, transparent); }
+.rbar b { text-align: right; font-variant-numeric: tabular-nums; }
+.rbar small { grid-column: 1 / -1; color: var(--muted); margin-top: -2px; }
+.rbar.flag > span, .rbar.flag small { color: var(--warn); }
+.rbar.flag i { background: var(--warn); }
