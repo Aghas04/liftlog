@@ -379,6 +379,8 @@ export function planWeek(input) {
   const trainedToday = out[todayIdx].kind === 'done';
   const remainingDays = weekdays.filter(d => d > todayIdx || (d === todayIdx && !trainedToday)).filter(d => out[d].kind !== 'done');
   for (const d of weekdays) if (d >= startIdx && d < todayIdx && out[d].kind !== 'done') { out[d].kind = 'missed'; }
+  // Days before the plan started (or resumed) aren't rest days, just not planned.
+  for (let d = 0; d < startIdx; d++) if (out[d].kind === 'rest') out[d].kind = 'before';
   const missed = weekdays.filter(d => d < todayIdx && out[d].kind === 'missed').length;
 
   // Next sessions in the rotation: the lowest sequence numbers not done yet.

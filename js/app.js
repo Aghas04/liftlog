@@ -1410,6 +1410,8 @@ function viewPlan() {
       body = `<b>Missed</b><small>Its session moves to your next day${act}</small>`;
     } else if (d.kind === 'activity') {
       body = `<b>${esc(d.activity.name)}</b><small>${d.activity.legs ? 'Hard on legs' : 'Other activity'}</small>`;
+    } else if (d.kind === 'before') {
+      body = `<b>—</b><small>${plan.activeFrom ? 'Plan was paused' : 'Before your plan started'}</small>`;
     } else if (d.kind === 'paused') {
       body = `<b>Paused</b><small>&nbsp;</small>`;
     } else {

@@ -409,3 +409,13 @@ test('block review keeps lifts that are still progressing', () => {
   assert.ok(!review.swaps.some(s => /stalled/.test(s.reason)), review.swaps.map(s => s.reason).join('; '));
   assert.ok(Object.values(review.volume).every(v => v.to <= v.from), 'progressing muscles do not get more volume');
 });
+
+test('days before the plan started show as not planned, not as rest; a full week uses every chosen day', () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  const wed = MONDAY + 2 * DAY;
+  const plan = fresh(p6, 'upper_lower', wed);
+  const week = currentWeek(plan, [], lookup, wed);
+  assert.deepEqual(week.days.map(d => d.kind), ['before', 'before', 'train', 'train', 'train', 'train', 'rest']);
+  const next = currentWeek(plan, [], lookup, MONDAY + 7 * DAY);
+  assert.deepEqual(next.days.map(d => d.kind), ['train', 'train', 'train', 'train', 'train', 'train', 'rest']);
+});

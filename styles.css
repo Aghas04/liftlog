@@ -627,7 +627,8 @@ label.btn { cursor: pointer; }
 .plan-day.train { border-left: 4px solid var(--c); }
 .plan-day.done { border-left: 4px solid var(--c); opacity: 0.75; }
 .plan-day.missed b { color: var(--muted); text-decoration: line-through; }
-.plan-day.rest, .plan-day.paused { background: transparent; }
+.plan-day.rest, .plan-day.paused, .plan-day.before { background: transparent; }
+.plan-day.before { opacity: 0.5; }
 .plan-day.activity b { color: var(--warn); }
 .plan-day.today { box-shadow: 0 0 0 2px var(--accent); }
 .pd-date { width: 40px; flex: none; text-align: center; }
