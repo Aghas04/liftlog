@@ -136,3 +136,39 @@ test('deload sessions do not lower the next suggestion', () => {
   assert.equal(s.weight, 150);
   assert.notEqual(s.kind, 'break');
 });
+
+test('fatigue: same history, tired now asks for less than fresh now', async () => {
+  const { fatigueLoad } = await import('../js/engine.js');
+  const h = [{ date: daysAgo(3), fatigue: 0, sets: sets(30, [12, 11, 10]) }];
+  const curl = { equipment: 'dumbbell', compound: false };
+  const fresh = suggest(curl, h, { increment: 5, now: NOW, fatigue: 0 });
+  const tired = suggest(curl, h, { increment: 5, now: NOW, fatigue: fatigueLoad({ back: 20 }, 'biceps') });
+  assert.ok(tired.est < fresh.est);
+  assert.ok(tired.reps[0] < fresh.reps[0] || tired.weight < fresh.weight);
+  assert.match(tired.reason, /lowered/);
+});
+
+test('fatigue: tired last time, fresh now asks for more', () => {
+  const tiredLast = [{ date: daysAgo(3), fatigue: 12, sets: sets(30, [10, 9, 8]) }];
+  const freshLast = [{ date: daysAgo(3), fatigue: 0, sets: sets(30, [10, 9, 8]) }];
+  const a = suggest(curl, tiredLast, { increment: 5, now: NOW, fatigue: 0 });
+  const b = suggest(curl, freshLast, { increment: 5, now: NOW, fatigue: 0 });
+  assert.ok(a.est > b.est);
+  assert.match(a.reason, /raised/);
+});
+
+test('fatigue load weights same muscle > helper > other', async () => {
+  const { fatigueLoad } = await import('../js/engine.js');
+  assert.ok(fatigueLoad({ triceps: 4 }, 'triceps') > fatigueLoad({ chest: 4 }, 'triceps'));
+  assert.ok(fatigueLoad({ chest: 4 }, 'triceps') > fatigueLoad({ quads: 4 }, 'triceps'));
+  assert.equal(fatigueLoad({}, 'biceps'), 0);
+});
+
+test('learns a steeper personal fatigue rate from varied positions', async () => {
+  const { learnFatigueRate, DEFAULT_FATIGUE_RATE } = await import('../js/engine.js');
+  // Same strength over time, but 3% weaker per fatigue point.
+  const pts = [0, 8, 2, 10, 4, 12, 0, 9].map((f, i) => ({ t: i * 3, f, e1rm: 100 * (1 - 0.03 * f) }));
+  const r = learnFatigueRate(pts);
+  assert.ok(r > DEFAULT_FATIGUE_RATE + 0.005, `rate ${r}`);
+  assert.equal(learnFatigueRate(pts.slice(0, 3)), DEFAULT_FATIGUE_RATE);
+});

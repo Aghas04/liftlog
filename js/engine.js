@@ -50,11 +50,69 @@ function fatigueDrop(sets) {
   return Math.max(0, Math.min(3, avg));
 }
 
+// ---------- Fatigue within a session ----------
+// Earlier work in a workout tires a muscle. The same muscle counts most,
+// muscles that help with the lift count partly (chest and shoulder pressing
+// before triceps, rows before curls), and everything else a little.
+export const SYNERGY = {
+  chest: ['shoulders', 'triceps'],
+  shoulders: ['chest', 'triceps'],
+  triceps: ['chest', 'shoulders'],
+  back: ['biceps', 'shoulders'],
+  biceps: ['back'],
+  quads: ['glutes', 'hamstrings'],
+  hamstrings: ['glutes', 'back'],
+  glutes: ['quads', 'hamstrings'],
+  calves: [],
+  abs: [],
+};
+const SAME = 1.5, HELPER = 0.6, OTHER = 0.1;
+
+/** Fatigue score for `muscle` given working sets already done per muscle. */
+export function fatigueLoad(priorSets, muscle) {
+  let f = 0;
+  for (const [m, n] of Object.entries(priorSets || {})) {
+    f += n * (m === muscle ? SAME : SYNERGY[muscle]?.includes(m) ? HELPER : OTHER);
+  }
+  return f;
+}
+
+// Strength lost per fatigue point; learned per lift once there's enough data.
+export const DEFAULT_FATIGUE_RATE = 0.012;
+export const fatigueFactor = (f, rate = DEFAULT_FATIGUE_RATE) => Math.max(0.7, 1 - rate * (f || 0));
+
+/**
+ * Learn how much this lifter's strength drops per fatigue point from sessions
+ * done at different positions, while allowing for getting stronger over time
+ * (least squares on log e1RM vs days and fatigue). Shrunk toward the default
+ * until there's plenty of data.
+ */
+export function learnFatigueRate(points) {
+  const pts = points.filter(p => p.e1rm > 0 && p.f != null);
+  if (pts.length < 4) return DEFAULT_FATIGUE_RATE;
+  const fs = pts.map(p => p.f);
+  if (Math.max(...fs) - Math.min(...fs) < 3) return DEFAULT_FATIGUE_RATE;
+  const n = pts.length;
+  const mean = a => a.reduce((s, v) => s + v, 0) / n;
+  const t = pts.map(p => p.t), y = pts.map(p => Math.log(p.e1rm));
+  const mt = mean(t), mf = mean(fs), my = mean(y);
+  let stt = 0, sff = 0, stf = 0, sty = 0, sfy = 0;
+  for (let i = 0; i < n; i++) {
+    const dt = t[i] - mt, df = fs[i] - mf, dy = y[i] - my;
+    stt += dt * dt; sff += df * df; stf += dt * df; sty += dt * dy; sfy += df * dy;
+  }
+  const det = stt * sff - stf * stf;
+  if (det <= 1e-9) return DEFAULT_FATIGUE_RATE;
+  const fitted = Math.min(0.03, Math.max(0.003, -(stt * sfy - stf * sty) / det));
+  return (n * fitted + 4 * DEFAULT_FATIGUE_RATE) / (n + 4);
+}
+
 /**
  * @param ex        exercise { equipment, compound, increment? }
  * @param history   past sessions for this exercise, oldest first:
- *                  { date: ISO, difficulty?: 'easy'|'hard'|'too_hard', sets: [...] }
- * @param opts      { bodyweight?: number, now?: number, increment: number }
+ *                  { date: ISO, difficulty?: 'easy'|'hard'|'too_hard', sets: [...], fatigue?: number }
+ * @param opts      { bodyweight?: number, now?: number, increment: number, fatigue?: number }
+ *                  fatigue = how tired this muscle will be at this point of today's workout
  * @returns null when there is no usable history, else
  *          { weight, reps: number[], kind, reason }
  */
@@ -78,12 +136,14 @@ export function suggest(ex, history, opts) {
   const drop = fatigueDrop(lastSets);
   const loadOf = w => (isBW ? bw + w : w);
   let est = 0;
+  let note = '';
+  let fatigue = null;
 
   // bonus: reps asked for beyond the estimate (1 when progressing by reps).
   const build = (weight, first, kind, reason, bonus = 0) => {
     const reps = [];
     for (let i = 0; i < n; i++) reps.push(Math.max(1, Math.round(first - drop * i)));
-    return { weight: Math.max(0, weight), reps, kind, reason, est, drop, bonus };
+    return { weight: Math.max(0, weight), reps, kind, reason: reason + note, est, drop, bonus, fatigue };
   };
 
   // Bodyweight lift with no bodyweight logged: progress reps only.
@@ -95,15 +155,30 @@ export function suggest(ex, history, opts) {
     return build(0, best + 1, 'reps', `Beat last time by a rep (best was ${best}).`);
   }
 
+  // Convert each past session to a "fresh" strength by undoing how tired the
+  // muscle was when it was done, then apply today's fatigue at the end.
+  const rate = learnFatigueRate(valid.slice(-12).map(s => ({
+    t: new Date(s.date).getTime() / DAY, e1rm: sessionE1RM(s, ex, bw), f: s.fatigue,
+  })));
+  const fresh = s => sessionE1RM(s, ex, bw) / fatigueFactor(s.fatigue, rate);
+
   // Strength estimate. A better session counts in full; a worse one is
   // softened by the session before so one bad day doesn't overreact.
-  est = sessionE1RM(last, ex, bw);
+  est = fresh(last);
   if (valid.length >= 2) {
-    const prev = sessionE1RM(valid[valid.length - 2], ex, bw);
+    const prev = fresh(valid[valid.length - 2]);
     if (prev > est) est = 0.75 * est + 0.25 * prev;
   }
   if (last.difficulty === 'easy') est *= 1.025;
   if (last.difficulty === 'too_hard') est *= 0.975;
+
+  const nowFactor = fatigueFactor(opts.fatigue, rate);
+  const lastFactor = fatigueFactor(last.fatigue, rate);
+  est *= nowFactor;
+  fatigue = { now: nowFactor, last: lastFactor, rate };
+  const shift = Math.round((nowFactor / lastFactor - 1) * 100);
+  if (shift <= -3) note = ` Target lowered ~${-shift}% — more tiring work before it than last time.`;
+  else if (shift >= 3) note = ` Target raised ~${shift}% — you're fresher for it than last time.`;
 
   const gapDays = (now - new Date(lastDate).getTime()) / DAY;
   if (gapDays > 14) {

@@ -3,7 +3,7 @@ import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
   dayType, visibleSplits,
 } from './store.js';
-import { suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor } from './engine.js';
+import { suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad } from './engine.js';
 import { recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets } from './insights.js';
 import { listPhotos, photoBlob, addPhoto, deletePhoto } from './photos.js';
 import { workoutCard, shareOrDownload } from './share.js';
@@ -115,9 +115,55 @@ function historyFor(exId, { excludeId, beforeIso } = {}) {
   for (const w of state.workouts) {
     if (w.id === excludeId) continue;
     if (beforeIso && w.date >= beforeIso) continue;
-    for (const e of w.exercises) if (e.exId === exId) out.push({ date: w.date, difficulty: e.difficulty, sets: e.sets, deload: e.deload });
+    w.exercises.forEach((e, i) => {
+      if (e.exId !== exId) return;
+      out.push({ date: w.date, difficulty: e.difficulty, sets: e.sets, deload: e.deload, fatigue: fatigueAt(w, i, false) });
+    });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// How tired an exercise's muscle is from the lifts before it in workout `w`.
+// planned: count every working set listed (today's plan); otherwise only sets done.
+function fatigueAt(w, idx, planned) {
+  const prior = {};
+  w.exercises.slice(0, idx).forEach(e => {
+    const m = exercise(e.exId).muscle;
+    prior[m] = (prior[m] || 0) + (planned ? e.sets.filter(s => !s.warmup).length : workingSets(e).length);
+  });
+  return fatigueLoad(prior, exercise(w.exercises[idx]?.exId ?? '').muscle);
+}
+
+// Fatigue for a lift about to be added at position idx of the active workout.
+function fatigueFor(exId, idx) {
+  const w = state.activeWorkout;
+  const probe = { exercises: [...w.exercises.slice(0, idx), { exId, sets: [] }] };
+  return fatigueAt(probe, idx, true);
+}
+
+// Re-suggest lifts not started yet after the workout's order or size changes.
+// Weights you've changed by hand are kept; only their rep goals update.
+function refreshPlan() {
+  const w = state.activeWorkout;
+  if (!w) return;
+  const bw = bodyweightOn();
+  w.exercises.forEach((e, i) => {
+    if (e.sets.some(s => s.done) || e.suggestion?.kind === 'guess') return;
+    const ex = exercise(e.exId);
+    const sug = suggestionFor(ex, fatigueAt(w, i, true));
+    if (!sug) return;
+    const old = e.suggestion;
+    e.suggestion = sug;
+    let k = 0;
+    for (const s of e.sets) {
+      if (s.warmup) continue;
+      if (!old || s.weight == null || s.weight === old.weight) s.weight = sug.weight;
+      const reps = s.weight === sug.weight ? sug.reps[k] ?? sug.reps.at(-1) : targetFor(sug, ex, s.weight, k, bw);
+      s.target = reps ? { weight: s.weight, reps } : s.target;
+      k++;
+    }
+  });
+  save();
 }
 
 function loadOf(ex, weight, dateIso) {
@@ -156,7 +202,7 @@ function startWorkout(dayId, from, template) {
   };
   const groups = {};
   for (const e of from?.exercises || []) {
-    const entry = buildEntry(e.exId);
+    const entry = buildEntry(e.exId, null, fatigueFor(e.exId, state.activeWorkout.exercises.length));
     if (e.group) entry.group = groups[e.group] ||= uid();
     state.activeWorkout.exercises.push(entry);
   }
@@ -175,8 +221,8 @@ function setsFrom(sug) {
     : [{ weight: null, reps: null, target: null, done: false }];
 }
 
-function suggestionFor(ex) {
-  let sug = suggest(ex, historyFor(ex.id), { increment: increment(ex), bodyweight: bodyweightOn() });
+function suggestionFor(ex, fatigue = 0) {
+  let sug = suggest(ex, historyFor(ex.id), { increment: increment(ex), bodyweight: bodyweightOn(), fatigue });
   if (sug && inDeload()) {
     const inc = increment(ex);
     sug = { ...sug, weight: Math.max(0, Math.round((sug.weight * 0.85) / inc) * inc), est: 0, kind: 'deload', reason: 'Deload week — about 15% lighter so you recover and come back stronger.' };
@@ -186,9 +232,9 @@ function suggestionFor(ex) {
 
 // A fresh exercise entry. `from` gives a rough starting weight when swapping
 // to a lift with no history: { ex, weight }.
-function buildEntry(exId, from) {
+function buildEntry(exId, from, fatigue = 0) {
   const ex = exercise(exId);
-  let sug = suggestionFor(ex);
+  let sug = suggestionFor(ex, fatigue);
   if (!sug && from) {
     const weight = swapWeight(from.ex, ex, from.weight, increment(ex));
     if (weight) {
@@ -203,7 +249,7 @@ function buildEntry(exId, from) {
 function addExercise(exId, doRender = true) {
   const w = state.activeWorkout;
   if (!w) return;
-  w.exercises.push(buildEntry(exId));
+  w.exercises.push(buildEntry(exId, null, fatigueFor(exId, w.exercises.length)));
   save();
   if (doRender) {
     closeSheet();
@@ -1538,7 +1584,7 @@ const actions = {
     if (j < 0 || j >= ex.length) return;
     [ex[i], ex[j]] = [ex[j], ex[i]];
     ui.sheet.ei = j;
-    save();
+    refreshPlan();
     render();
   },
   picker() { openSheet({ type: 'picker' }); },
@@ -1654,7 +1700,7 @@ const actions = {
     setExSetting(e.exId, 'increment', +el.dataset.v);
     // Nothing logged yet: rebuild the suggestion with the new step.
     if (!e.sets.some(s => s.done)) {
-      e.suggestion = suggestionFor(exercise(e.exId));
+      e.suggestion = suggestionFor(exercise(e.exId), fatigueAt(state.activeWorkout, ui.sheet.ei, true));
       e.sets = setsFrom(e.suggestion);
       save();
     }
@@ -1680,11 +1726,13 @@ const actions = {
     const old = w.exercises[i];
     const oldEx = exercise(old.exId);
     const work = old.sets.find(s => !s.warmup)?.weight ?? old.suggestion?.weight;
-    const entry = buildEntry(el.dataset.id, { ex: oldEx, weight: work });
+    const keepOld = old.sets.some(s => s.done);
+    const at = keepOld ? i + 1 : i; // a replaced lift doesn't count as earlier work
+    const entry = buildEntry(el.dataset.id, { ex: oldEx, weight: work }, fatigueFor(el.dataset.id, at));
     entry.group = old.group;
-    if (old.sets.some(s => s.done)) w.exercises.splice(i + 1, 0, entry);
+    if (keepOld) w.exercises.splice(at, 0, entry);
     else w.exercises[i] = entry;
-    save();
+    refreshPlan();
     closeSheet();
     render();
   },
@@ -1701,7 +1749,7 @@ const actions = {
     w.exercises = w.exercises.filter(x => !moving.includes(x));
     const lastIdx = w.exercises.map(x => x.group).lastIndexOf(g);
     w.exercises.splice(lastIdx + 1, 0, ...moving);
-    save();
+    refreshPlan();
     closeSheet();
     render();
   },
@@ -1719,7 +1767,7 @@ const actions = {
   removeExMenu() {
     const w = state.activeWorkout;
     const name = exercise(w.exercises[ui.sheet.ei].exId).name;
-    withUndo(`Removed ${name}`, () => { w.exercises.splice(ui.sheet.ei, 1); save(); });
+    withUndo(`Removed ${name}`, () => { w.exercises.splice(ui.sheet.ei, 1); refreshPlan(); });
     closeSheet();
     render();
   },
@@ -1836,13 +1884,14 @@ const actions = {
     }
     c.e.sets.push(ns);
     save();
-    refreshCard(c.card);
+    // More sets here means more fatigue for the lifts after it.
+    if (c.ctx === 'active') { refreshPlan(); render(); } else refreshCard(c.card);
   },
   removeSet(el) {
     const c = setCtx(el);
     if (c.e.sets.length <= 1) { toast('Remove the exercise from its menu instead'); return; }
     withUndo('Set removed', () => { c.e.sets.pop(); save(); });
-    refreshCard(c.card);
+    if (c.ctx === 'active') { refreshPlan(); render(); } else refreshCard(c.card);
   },
   removeEx(el) {
     const c = setCtx(el);
@@ -1852,6 +1901,7 @@ const actions = {
         state.workouts = state.workouts.filter(w => w !== c.w);
         ui.historyId = null;
       }
+      if (c.ctx === 'active') refreshPlan();
       save();
     });
     render();

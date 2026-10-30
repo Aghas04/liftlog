@@ -1,6 +1,6 @@
 // Offline support: serve the app shell from cache, refresh it in the background.
 // Bump VERSION when shipping changes so phones pick up the new files.
-const VERSION = 'liftlog-v6';
+const VERSION = 'liftlog-v7';
 const FILES = [
   './',
   'index.html',
@@ -24,7 +24,13 @@ const FILES = [
 ];
 
 self.addEventListener('install', ev => {
-  ev.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache, so a new version never
+  // mixes fresh files with stale ones (GitHub Pages lets browsers cache 10 min).
+  ev.waitUntil(
+    caches.open(VERSION)
+      .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', ev => {
@@ -40,7 +46,7 @@ self.addEventListener('fetch', ev => {
   ev.respondWith(
     caches.open(VERSION).then(async cache => {
       const cached = await cache.match(ev.request, { ignoreSearch: true });
-      const fresh = fetch(ev.request)
+      const fresh = fetch(ev.request, { cache: 'no-cache' })
         .then(res => { if (res.ok) cache.put(ev.request, res.clone()); return res; })
         .catch(() => cached);
       return cached || fresh;
