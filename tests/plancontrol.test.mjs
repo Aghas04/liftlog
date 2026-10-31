@@ -653,3 +653,16 @@ test('custom lifts without a muscle-area map do not crowd out real lifts', async
   const plan = createPlan({ profile: { ...profile, days: [0, 1, 2, 3, 4, 5] }, splitId: 'upper_lower', exercises: p.exercises, usage: p.usage, workouts: [], lookup: look, now: MONDAY - 7 * DAY });
   for (const v of plan.slots.upper) assert.notEqual(v.back[0], 'c_x', 'a guessed custom lift is not a core lift');
 });
+
+test("machines your gym doesn't have are never planned or used as replacements", async () => {
+  const { planPool } = await import('../js/plancontrol.js');
+  const settings = { notAtGym: ['leg_press', 'hack_squat', 'lat_pulldown'] };
+  const blocked = blockedLifts(settings, null);
+  for (const id of settings.notAtGym) assert.ok(blocked.includes(id));
+  const usable = EXERCISES.filter(e => !blocked.includes(e.id));
+  const p = planPool(usable, { usage: { leg_press: 10 } });
+  const plan = createPlan({ profile: { ...profile, days: [0, 1, 2, 3, 4, 5] }, splitId: 'upper_lower', exercises: p.exercises, usage: p.usage, workouts: [], lookup, now: MONDAY - 7 * DAY, blocked });
+  for (const id of settings.notAtGym) assert.ok(!allSlotIds(plan).includes(id), `${id} planned`);
+  const repl = replacementFor('squat', { plan, exercises: p.exercises, lookup, blocked });
+  assert.ok(repl && !settings.notAtGym.includes(repl.id));
+});

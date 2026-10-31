@@ -101,3 +101,25 @@ test('search: a machine you have used once ranks above unused common versions', 
   const plate = EXERCISES.find(e => e.name === 'Plate-Loaded Incline Press');
   assert.equal(searchExercises(EXERCISES, 'incline', { muscle: 'chest' }, { usage: { [plate.id]: 1 } })[0].id, plate.id);
 });
+
+test('library: inner and outer thigh machines, and other common gym machines', () => {
+  const top = q => searchExercises(EXERCISES, q)[0]?.name;
+  assert.equal(top('inner thigh'), 'Hip Adduction Machine (Inner Thigh)');
+  assert.equal(top('outer thigh'), 'Hip Abduction Machine (Outer Thigh)');
+  assert.equal(top('adductor'), 'Hip Adduction Machine (Inner Thigh)');
+  assert.equal(top('abductor machine'), 'Hip Abduction Machine (Outer Thigh)');
+  // Renamed, same ids, so history is kept.
+  assert.equal(EXERCISES.find(e => e.id === 'adductor_machine').name, 'Hip Adduction Machine (Inner Thigh)');
+  assert.equal(EXERCISES.find(e => e.id === 'hip_abduction').name, 'Hip Abduction Machine (Outer Thigh)');
+  for (const n of ['Reverse Hyper Machine', 'Low Row (Plate-Loaded)', 'Donkey Calf Raise Machine', 'Kneeling Leg Curl Machine', 'Leverage Squat (Plate-Loaded)',
+    'Converging Chest Press Machine', 'Wide Chest Press (Plate-Loaded)', 'Ab Coaster', 'Standing Hip Abduction Machine (Multi-Hip)', 'Rear Delt Row Machine']) {
+    assert.ok(byName(n), `${n} missing`);
+  }
+});
+
+test('moving history from a library lift suggests its other versions first', () => {
+  const from = EXERCISES.find(e => e.id === 'machine_chest_press');
+  const top = matchSuggestions(from, EXERCISES, 4).map(x => x.ex);
+  assert.ok(top.slice(0, 3).every(e => e.movement === from.movement), top.map(e => e.name).join(', '));
+  assert.ok(top.some(e => e.name === 'Plate-Loaded Chest Press'));
+});

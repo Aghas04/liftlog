@@ -44,6 +44,10 @@ const GROUPS = [
   ['standing'],
   ['lying', 'prone'],
   ['single', 'one', 'unilateral'],
+  ['adduction', 'adductor', 'adductors', 'inner', 'adduct'],
+  ['abduction', 'abductor', 'abductors', 'outer', 'abduct'],
+  ['thigh', 'thighs'],
+  ['multihip', 'multi'],
 ];
 const CANON = new Map();
 for (const g of GROUPS) for (const w of g) CANON.set(w, g[0]);
@@ -99,7 +103,10 @@ export function searchExercises(list, query = '', filters = {}, rank = {}) {
     const { hits, of } = matchScore(ex, query);
     if (hits < of) continue;
     const exact = of && tokenize(ex.name).map(canon).join(' ') === queryWords(query).join(' ');
-    out.push({ ex, score: (exact ? 100 : 0) + (stars.has(ex.id) ? 20 : 0) + (usage[ex.id] ? 4 + Math.min(usage[ex.id], 10) : 0) + (ex.common ? 3 : 0) - ex.name.length / 100 });
+    // Words found in the name itself count more than ones matched via muscle or equipment.
+    const nameWords = new Set([...tokenize(ex.name), ...joined(ex.name)].map(canon));
+    const inName = queryWords(query).filter(w => hit(nameWords, w)).length;
+    out.push({ ex, score: (exact ? 100 : 0) + inName * 5 + (stars.has(ex.id) ? 20 : 0) + (usage[ex.id] ? 4 + Math.min(usage[ex.id], 10) : 0) + (ex.common ? 3 : 0) - ex.name.length / 100 });
   }
   return out.sort((a, b) => b.score - a.score || a.ex.name.localeCompare(b.ex.name)).map(x => x.ex);
 }
@@ -123,6 +130,8 @@ export function matchSuggestions(custom, library, max = 5) {
     const extra = [...own].filter(w => !q.includes(w)).length;
     let score = hits / q.length - extra * 0.05;
     if (ex.muscle === custom.muscle) score += 0.15;
+    // Moving history from a library lift: other versions of the same movement first.
+    if (custom.movement && ex.movement === custom.movement) score += 0.5;
     if (ex.equipment === custom.equipment) score += 0.1;
     scored.push({ ex, raw: score, score: Math.max(0, Math.min(1, score)) });
   }

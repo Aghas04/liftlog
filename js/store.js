@@ -12,7 +12,8 @@ function emptyState() {
       units: 'lb', safetyAck: null,
       painFlags: {}, // exId -> ISO date of the 'This hurt' report; kept out of plans and suggestions
       readinessCheck: true,
-      gymStars: [] },      // exercise ids marked 'at my gym'
+      gymStars: [],     // exercise ids marked 'at my gym'
+      notAtGym: [] },   // exercise ids your gym doesn't have: never suggested
     plan: null,           // weekly plan, see planner.js
     customExercises: [],
     exerciseSettings: {}, // exId -> { rest, increment, note }

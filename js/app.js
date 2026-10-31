@@ -1,6 +1,6 @@
 import { MUSCLES, EQUIPMENT, REGIONS, CUSTOM_SPLIT, EQUIPMENT_PROFILES, ANGLES, regionsOf, exerciseRegions, primaryRegion } from './data.js';
 import { searchExercises, matchSuggestions } from './search.js';
-import { mergeExercise, mergePreview } from './merge.js';
+import { mergeExercise, mergePreview, moveHistory } from './merge.js';
 import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion } from './builder.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
@@ -1100,6 +1100,7 @@ function progressLifts() {
   <select class="ex-select" data-field="progressEx">
     ${exIds.map(id => `<option value="${id}" ${id === ui.progressEx ? 'selected' : ''}>${esc(exercise(id).name)}</option>`).join('')}
   </select>
+  <button class="move-link" data-act="${exercise(ui.progressEx).custom ? 'matchSheet' : 'moveSheet'}" data-id="${ui.progressEx}">${exercise(ui.progressEx).custom ? '🔗 Match to a library exercise' : '↔️ Logged under the wrong exercise? Move history'}</button>
   <div class="seg" style="margin-bottom:10px">
     ${[['e1rm', 'Strength'], ['top', 'Top set'], ['volume', 'Volume']].map(([v, l]) => `<button data-act="metric" data-v="${v}" class="${ui.progressMetric === v ? 'on' : ''}">${l}</button>`).join('')}
   </div>
@@ -1733,6 +1734,28 @@ function calibrate(c) {
   return true;
 }
 
+// A lift you can't or won't do: take it out of the plan and swap it out of
+// today's workout for one that trains the same area (from the versions you
+// use, star or that are common). Logged sets stay; unfinished ones go.
+function keepOut(i, msg) {
+  const w = state.activeWorkout;
+  const e = w.exercises[i];
+  if (state.plan) state.plan = dropFromBlock(state.plan, e.exId, { ...planCtx(), blocked: blocked() });
+  const inWorkout = w.exercises.map(x => x.exId);
+  const fallbackPlan = state.plan || { profile: { equipment: 'gym', level: 'intermediate' } };
+  const p = pool();
+  const repl = replacementFor(e.exId, { plan: fallbackPlan, exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, exclude: inWorkout });
+  if (!e.sets.some(s => s.done)) {
+    if (repl) { replaceEntry(i, repl.id); msg = `Swapped for ${repl.name}. ${msg}`; } else w.exercises.splice(i, 1);
+  } else {
+    e.sets = e.sets.filter(s => s.done);
+  }
+  refreshPlan();
+  closeSheet();
+  render();
+  toast(msg);
+}
+
 // ---------- Matching custom exercises ----------
 const libraryOnly = () => allExercises().filter(e => !e.custom);
 
@@ -1748,12 +1771,13 @@ function customMatchesHtml(name, muscle) {
 // Results in the match sheet: best guesses, or search results while typing.
 function matchListHtml() {
   const custom = exercise(ui.sheet.fromId);
+  const act = ui.sheet.move ? 'movePick' : 'matchPick';
   const q = (ui.matchQ || '').trim();
   const rows = q
     ? searchExercises(libraryOnly(), q, {}, { usage: usageCounts(), stars: stars() }).slice(0, 40)
     : matchSuggestions(custom, libraryOnly(), 6).map(x => x.ex);
   const head = q ? '' : `<div class="section-title">Best matches</div>`;
-  return head + (rows.map(ex => `<button class="pick" data-act="matchPick" data-id="${ex.id}"><span>${esc(ex.name)}</span><span class="muted pick-eq">${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}</span></button>`).join('')
+  return head + (rows.filter(ex => ex.id !== custom.id).map(ex => `<button class="pick" data-act="${act}" data-id="${ex.id}"><span>${esc(ex.name)}</span><span class="muted pick-eq">${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}</span></button>`).join('')
     || '<div class="empty">No match. Try other words, like "incline plate" or "pin row".</div>');
 }
 
@@ -1800,7 +1824,8 @@ function pickerList(query) {
   const hits = ex => neglected.find(r => (exerciseRegions(ex)[r] || 0) >= DIRECT);
   const item = ex => {
     const r = hits(ex);
-    return pickRowHtml(ex, 'pick', { added: added.has(ex.id), tag: r ? `<em class="hit-tag">Hits ${esc(REGIONS[r].name.toLowerCase())}</em>` : '' });
+    const missing = (state.settings.notAtGym || []).includes(ex.id);
+    return pickRowHtml(ex, 'pick', { added: added.has(ex.id), tag: missing ? '<em class="hit-tag off">Not at your gym</em>' : r ? `<em class="hit-tag">Hits ${esc(REGIONS[r].name.toLowerCase())}</em>` : '' });
   };
   if (q || f.muscle || f.equipment || f.angle) {
     const res = searchExercises(allExercises(), q, f, { usage: counts, stars: stars() });
@@ -1809,7 +1834,8 @@ function pickerList(query) {
   }
   // No search: the usual versions per muscle (plus anything you've used or starred).
   const starred = new Set(stars());
-  const usual = e => e.common || e.custom || counts[e.id] || starred.has(e.id);
+  const away = new Set(state.settings.notAtGym || []);
+  const usual = e => !away.has(e.id) && (e.common || e.custom || counts[e.id] || starred.has(e.id));
   const starFirst = (a, b) => starred.has(b.id) - starred.has(a.id) || sortFn(a, b);
   const weekSets = muscleSets(state.workouts, exercise, new Date(Date.now() - 7 * DAY).toISOString());
   const target = state.settings.weeklyTarget;
@@ -2076,8 +2102,9 @@ function sheetHtml() {
           <button data-act="addWarmups"><span>🔥</span>Add warm-up sets</button>
           <button data-act="swapSheet"><span>🔄</span>Swap exercise</button>
           <button data-act="hurtSheet"><span>🤕</span>This hurt</button>
+          <button data-act="notAtGym"><span>🚫</span>My gym doesn't have this</button>
           <button data-act="star" data-id="${e.exId}"><span>${stars().includes(e.exId) ? '★' : '☆'}</span>${stars().includes(e.exId) ? 'Starred: at my gym' : 'Star: at my gym'}</button>
-          ${ex.custom ? `<button data-act="matchSheet" data-id="${ex.id}"><span>🔗</span>Match to a library exercise</button>` : ''}
+          ${ex.custom ? `<button data-act="matchSheet" data-id="${ex.id}"><span>🔗</span>Match to a library exercise</button>` : historyFor(ex.id).length ? `<button data-act="moveSheet" data-id="${ex.id}"><span>↔️</span>Move past history to another exercise</button>` : ''}
           <button data-act="supersetSheet"><span>🔗</span>${e.group ? 'Add another to this superset' : 'Superset with…'}</button>
           ${e.group ? `<button data-act="unSuperset"><span>✂️</span>Remove from superset</button>` : ''}
           <button class="danger" data-act="removeExMenu"><span>🗑</span>Remove exercise</button>
@@ -2146,10 +2173,33 @@ function sheetHtml() {
     }
     case 'match': {
       const c = exercise(s.fromId);
+      if (s.move) {
+        return `<h2>↔️ Move history of ${esc(c.name)}</h2>
+        <p class="muted small">Logged it under the wrong exercise? Pick the one it really was. Next you choose which workouts to move.</p>
+        <input class="search" id="matchSearch" placeholder="Search, e.g. plate chest press" autocomplete="off" value="${esc(ui.matchQ || '')}">
+        <div id="matchList">${matchListHtml()}</div>`;
+      }
       return `<h2>🔗 Match "${esc(c.name)}"</h2>
         <p class="muted small">Pick the library exercise it really is. Its sets, note, weight step and template spots move over, so suggestions and progress carry on.</p>
         <input class="search" id="matchSearch" placeholder="Search, e.g. incline plate press" autocomplete="off" value="${esc(ui.matchQ || '')}">
         <div id="matchList">${matchListHtml()}</div>`;
+    }
+    case 'moveConfirm': {
+      const from = exercise(s.fromId);
+      const to = exercise(s.toId);
+      const list = [...state.workouts].filter(w => w.exercises.some(e => e.exId === s.fromId)).sort((a, b) => b.date.localeCompare(a.date));
+      const n = list.filter(w => s.pick.includes(w.id)).length;
+      return `<h2>Move to ${esc(to.name)}</h2>
+        <p class="muted small">Tick the workouts that were really ${esc(to.name)}. Unticked ones stay as ${esc(from.name)}.</p>
+        <div class="row" style="margin-bottom:8px"><button class="btn" data-act="moveAll" data-v="1">Select all</button><button class="btn" data-act="moveAll" data-v="0">Select none</button></div>
+        <div class="move-list">${list.map(w => {
+          const sets = w.exercises.filter(e => e.exId === s.fromId).flatMap(e => e.sets);
+          return `<button class="move-row ${s.pick.includes(w.id) ? 'on' : ''}" data-act="moveToggle" data-id="${w.id}"><span class="tick">${s.pick.includes(w.id) ? '✓' : ''}</span>
+            <span><b>${fmtDate(w.date)}</b><small>${esc(setsSummary(from, sets))}</small></span></button>`;
+        }).join('')}</div>
+        <div class="stack" style="margin-top:12px"><button class="btn primary" data-act="moveDo" ${n ? '' : 'disabled style="opacity:.5"'}>Move ${n} workout${n === 1 ? '' : 's'}</button>
+          <button class="btn" data-act="moveBack">Pick a different exercise</button></div>
+        <p class="muted small">You can undo right after.</p>`;
     }
     case 'matchConfirm': {
       const c = exercise(s.fromId);
@@ -2254,6 +2304,9 @@ function sheetHtml() {
         </div>
         ${Object.keys(state.settings.painFlags || {}).length ? `<div class="field"><span>Lifts that hurt — kept out of plans. Tap to allow again</span>
           <div class="chips">${Object.keys(state.settings.painFlags).map(id => `<button data-act="unpain" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div>
+        </div>` : ''}
+        ${(state.settings.notAtGym || []).length ? `<div class="field"><span>Not at my gym — never suggested. Tap if your gym gets it</span>
+          <div class="chips">${state.settings.notAtGym.map(id => `<button data-act="atGymAgain" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div>
         </div>` : ''}
         ${stars().length ? `<div class="field"><span>At my gym (starred) — tap to unstar</span>
           <div class="chips">${stars().map(id => `<button data-act="star" data-id="${id}">★ ${esc(exercise(id).name)}</button>`).join('')}</div>
@@ -2733,6 +2786,26 @@ const actions = {
 
   // Matching custom exercises to the library
   matchSheet(el) { ui.matchQ = ''; openSheet({ type: 'match', fromId: el.dataset.id }); },
+  moveSheet(el) { ui.matchQ = ''; openSheet({ type: 'match', move: true, fromId: el.dataset.id || ui.sheet?.exId }); },
+  movePick(el) {
+    const fromId = ui.sheet.fromId;
+    const pick = state.workouts.filter(w => w.exercises.some(e => e.exId === fromId)).map(w => w.id);
+    openSheet({ type: 'moveConfirm', fromId, toId: el.dataset.id, pick });
+  },
+  moveToggle(el) { const s = ui.sheet; const id = el.dataset.id; s.pick = s.pick.includes(id) ? s.pick.filter(x => x !== id) : [...s.pick, id]; renderSheet(); },
+  moveAll(el) { const s = ui.sheet; s.pick = el.dataset.v === '1' ? state.workouts.filter(w => w.exercises.some(e => e.exId === s.fromId)).map(w => w.id) : []; renderSheet(); },
+  moveBack() { openSheet({ type: 'match', move: true, fromId: ui.sheet.fromId }); },
+  moveDo() {
+    const { fromId, toId, pick } = ui.sheet;
+    if (!pick.length) return;
+    const name = exercise(toId).name;
+    let result;
+    try { result = moveHistory(state, fromId, toId, pick); } catch (e) { toast(e.message); return; }
+    withUndo(`Moved ${result.moved.workouts} workout${result.moved.workouts === 1 ? '' : 's'} to ${name}`, () => replaceState(result.state));
+    if (ui.tab === 'progress' && ui.progressEx === fromId && result.moved.all) ui.progressEx = toId;
+    closeSheet();
+    render();
+  },
   matchPick(el) { openSheet({ type: 'matchConfirm', fromId: ui.sheet.fromId, toId: el.dataset.id }); },
   matchBack() { openSheet({ type: 'match', fromId: ui.sheet.fromId }); },
   matchDo() {
@@ -2751,27 +2824,22 @@ const actions = {
   hurtSheet() { openSheet({ type: 'hurt', ei: ui.sheet.ei }); },
   hurtSwap() { openSheet({ type: 'swap', ei: ui.sheet.ei }); },
   hurtAvoid() {
-    const w = state.activeWorkout;
-    const i = ui.sheet.ei;
-    const e = w.exercises[i];
-    const ex = exercise(e.exId);
+    const e = state.activeWorkout.exercises[ui.sheet.ei];
     state.settings.painFlags = { ...(state.settings.painFlags || {}), [e.exId]: new Date().toISOString() };
-    if (state.plan) state.plan = dropFromBlock(state.plan, e.exId, { ...planCtx(), blocked: blocked() });
-    // Swap it out now: a replacement for the same area if nothing is logged yet,
-    // otherwise keep the logged sets and drop the rest.
-    const inWorkout = w.exercises.map(x => x.exId);
-    const fallbackPlan = state.plan || { profile: { equipment: 'gym', level: 'intermediate' } };
-    const repl = replacementFor(e.exId, { plan: fallbackPlan, exercises: allExercises(), lookup: exercise, blocked: blocked(), usage: usageCounts(), exclude: inWorkout });
-    let msg = `${ex.name} is kept out of your plans`;
-    if (!e.sets.some(s => s.done)) {
-      if (repl) { replaceEntry(i, repl.id); msg = `Swapped for ${repl.name}. ${msg}`; } else w.exercises.splice(i, 1);
-    } else {
-      e.sets = e.sets.filter(s => s.done);
-    }
-    refreshPlan();
-    closeSheet();
-    render();
-    toast(msg);
+    keepOut(ui.sheet.ei, `${exercise(e.exId).name} is kept out of your plans`);
+  },
+  notAtGym() {
+    const e = state.activeWorkout.exercises[ui.sheet.ei];
+    const id = e.exId;
+    state.settings.notAtGym = [...new Set([...(state.settings.notAtGym || []), id])];
+    state.settings.gymStars = stars().filter(x => x !== id);
+    keepOut(ui.sheet.ei, `Got it — ${exercise(id).name} won't be suggested again`);
+  },
+  atGymAgain(el) {
+    state.settings.notAtGym = (state.settings.notAtGym || []).filter(x => x !== el.dataset.id);
+    save();
+    renderSheet();
+    toast(`${exercise(el.dataset.id).name} can be suggested again`);
   },
   unpain(el) {
     const flags = { ...(state.settings.painFlags || {}) };

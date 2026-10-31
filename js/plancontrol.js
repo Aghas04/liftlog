@@ -17,9 +17,9 @@ export const BREAK_DAYS = 14;
 /** Block length in weeks: shorter for advanced lifters, who adapt faster. */
 export const blockWeeksFor = level => (level === 'beginner' ? 6 : level === 'advanced' ? 4 : 5);
 
-/** Lifts kept out of plans: 'This hurt' reports, the setup avoid list, and learned removals. */
+/** Lifts kept out of plans: 'This hurt' reports, machines your gym doesn't have, the setup avoid list, and learned removals. */
 export function blockedLifts(settings = {}, plan = null) {
-  const out = new Set(Object.keys(settings.painFlags || {}));
+  const out = new Set([...Object.keys(settings.painFlags || {}), ...(settings.notAtGym || [])]);
   for (const id of plan?.profile?.avoid || []) out.add(id);
   for (const id of plan?.excluded || []) out.add(id);
   return [...out];

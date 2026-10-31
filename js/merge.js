@@ -66,3 +66,28 @@ export function mergeExercise(state, fromId, toId) {
   next.customExercises = next.customExercises.filter(c => c.id !== fromId);
   return { state: next, moved };
 }
+
+/**
+ * Move logged history from one exercise to another — for any lift, e.g. sets
+ * logged as "Machine Chest Press" that were really the plate-loaded press.
+ * workoutIds: only these workouts (all when omitted). Moving everything also
+ * carries the note and weight step over when the target has none. Templates
+ * and plans aren't touched (the lift itself still exists). Returns { state, moved }.
+ */
+export function moveHistory(state, fromId, toId, workoutIds = null) {
+  if (!toId || toId === fromId) throw new Error('Pick a different exercise to move to');
+  const pick = workoutIds && new Set(workoutIds);
+  const next = JSON.parse(JSON.stringify(state));
+  let workouts = 0, sets = 0;
+  for (const w of next.workouts || []) {
+    if (pick && !pick.has(w.id)) continue;
+    const mine = w.exercises.filter(e => e.exId === fromId);
+    if (!mine.length) continue;
+    workouts++;
+    for (const e of mine) { e.exId = toId; sets += e.sets.filter(s => s.done && !s.warmup).length; }
+  }
+  const all = !pick || !(next.workouts || []).some(w => w.exercises.some(e => e.exId === fromId));
+  const es = next.exerciseSettings || {};
+  if (all && es[fromId]) es[toId] = { ...es[fromId], ...(es[toId] || {}) };
+  return { state: next, moved: { workouts, sets, all } };
+}

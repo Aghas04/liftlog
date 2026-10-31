@@ -750,3 +750,11 @@ label.btn { cursor: pointer; }
 .fresh-toggle input { width: 22px; height: 22px; margin-top: 2px; accent-color: var(--accent); flex: none; }
 .fresh-toggle b { display: block; font-size: 15px; }
 .fresh-toggle small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.4; }
+.hit-tag.off { color: var(--miss); background: color-mix(in srgb, var(--miss) 12%, transparent); }
+.move-link { display: block; font-size: 13px; font-weight: 700; color: var(--accent); margin: -4px 0 10px; text-align: left; }
+.move-list { display: grid; gap: 6px; max-height: 50vh; overflow-y: auto; }
+.move-row { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 2px solid transparent; }
+.move-row.on { border-color: var(--accent); }
+.move-row .tick { width: 22px; height: 22px; border-radius: 6px; background: var(--surface); display: grid; place-items: center; font-weight: 900; color: var(--accent); flex: none; }
+.move-row b { display: block; font-size: 14px; }
+.move-row small { display: block; font-size: 12px; color: var(--muted); }

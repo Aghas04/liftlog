@@ -30,6 +30,8 @@ export const MOVEMENTS = [
     ['barbell', 'bench_press', null], ['dumbbell', 'db_bench', null], ['machine', 'machine_chest_press', null],
     ['plate_loaded', null, 'Plate-Loaded Chest Press'], ['smith', null, 'Smith Machine Bench Press'],
     ['plate_loaded', 'iso_chest_press_plate', 'Iso-Lateral Chest Press (Plate-Loaded)', { unilateral: true }],
+    ['plate_loaded', 'wide_chest_press_plate', 'Wide Chest Press (Plate-Loaded)'], ['machine', 'converging_chest_press', 'Converging Chest Press Machine'],
+    ['cable', 'cable_chest_press', 'Standing Cable Chest Press'],
   ]),
   M('incline_press', 'chest', true, INCLINE, { angle: 'incline' }, [
     ['barbell', 'incline_bench', null], ['dumbbell', 'incline_db_press', null], ['machine', null, 'Machine Incline Press'],
@@ -42,6 +44,7 @@ export const MOVEMENTS = [
   ]),
   M('chest_fly', 'chest', false, { chest_mid: 1, chest_upper: 0.3, chest_lower: 0.3 }, { angle: 'flat' }, [
     ['cable', 'cable_fly', null], ['machine', 'pec_deck', null], ['dumbbell', null, 'Dumbbell Fly'],
+    ['plate_loaded', null, 'Plate-Loaded Chest Fly'],
   ]),
   M('incline_fly', 'chest', false, { chest_upper: 1, chest_mid: 0.4, delt_front: 0.2 }, { angle: 'incline' }, [
     ['cable', 'low_high_cable_fly', null], ['dumbbell', null, 'Incline Dumbbell Fly'],
@@ -61,6 +64,8 @@ export const MOVEMENTS = [
     ['cable', 'lat_pulldown', null], ['machine', null, 'Machine Lat Pulldown'], ['plate_loaded', null, 'Plate-Loaded Lat Pulldown'],
     ['cable', 'close_grip_pulldown', 'Close-Grip Lat Pulldown', { grip: 'close', regions: { lats: 1, upper_back: 0.3, bi_short: 0.3, brachialis: 0.2 } }],
     ['cable', 'single_arm_pulldown', 'Single-Arm Cable Pulldown', { unilateral: true }],
+    ['plate_loaded', 'iso_pulldown_plate', 'Iso-Lateral Front Pulldown (Plate-Loaded)', { unilateral: true }],
+    ['machine', 'dual_pulley_pulldown', 'Dual-Handle Lat Pulldown Machine'],
   ]),
   M('pull_up', 'back', true, PULLDOWN, {}, [
     ['bodyweight', 'pull_up', null], ['assisted', null, 'Assisted Pull-up'],
@@ -71,6 +76,7 @@ export const MOVEMENTS = [
   M('seated_row', 'back', true, ROW, { position: 'seated' }, [
     ['cable', 'cable_row', null], ['machine', 'machine_row', null], ['plate_loaded', null, 'Plate-Loaded Seated Row'],
     ['plate_loaded', 'iso_row_plate', 'Iso-Lateral Row (Plate-Loaded)', { unilateral: true }],
+    ['plate_loaded', 'low_row_plate', 'Low Row (Plate-Loaded)'], ['plate_loaded', 'iso_low_row_plate', 'Iso-Lateral Low Row (Plate-Loaded)', { unilateral: true }],
   ]),
   M('bent_row', 'back', true, { upper_back: 1, lats: 0.6, lower_back: 0.4, delt_rear: 0.4, brachialis: 0.2 }, { position: 'standing' }, [
     ['barbell', 'barbell_row', null], ['smith', null, 'Smith Machine Row'], ['dumbbell', null, 'Bent-Over Dumbbell Row'],
@@ -100,6 +106,7 @@ export const MOVEMENTS = [
   ]),
   M('back_extension', 'back', false, { lower_back: 1, glute_max: 0.5, ham_hinge: 0.4 }, {}, [
     ['bodyweight', 'back_extension', null], ['machine', null, 'Back Extension Machine'],
+    ['plate_loaded', null, 'Plate-Loaded Back Extension'],
   ]),
 
   // ---------- Biceps ----------
@@ -161,6 +168,7 @@ export const MOVEMENTS = [
   ]),
   M('lateral_raise', 'shoulders', false, { delt_side: 1, traps: 0.2 }, {}, [
     ['dumbbell', 'lateral_raise', null], ['cable', 'cable_lateral_raise', null], ['machine', null, 'Lateral Raise Machine'],
+    ['cable', 'cable_y_raise', 'Cable Y-Raise', { regions: { delt_side: 1, delt_rear: 0.3, traps: 0.3 } }],
     ['plate_loaded', null, 'Plate-Loaded Lateral Raise'],
   ]),
   M('upright_row', 'shoulders', true, { delt_side: 1, traps: 0.6, delt_front: 0.3 }, { position: 'standing' }, [
@@ -172,6 +180,7 @@ export const MOVEMENTS = [
   ]),
   M('rear_delt', 'shoulders', false, { delt_rear: 1, upper_back: 0.4 }, {}, [
     ['dumbbell', 'rear_delt_fly', null], ['machine', 'reverse_pec_deck', null], ['cable', null, 'Cable Rear Delt Fly'],
+    ['plate_loaded', null, 'Plate-Loaded Rear Delt Fly'], ['machine', 'rear_delt_row_machine', 'Rear Delt Row Machine', { regions: { delt_rear: 1, upper_back: 0.6 } }],
   ]),
   M('face_pull', 'shoulders', false, { delt_rear: 1, upper_back: 0.6, traps: 0.3 }, {}, [
     ['cable', 'face_pull', null],
@@ -194,6 +203,7 @@ export const MOVEMENTS = [
   ]),
   M('hack_squat', 'quads', true, { vasti: 1, glute_max: 0.3 }, {}, [
     ['machine', 'hack_squat', null], ['plate_loaded', null, 'Plate-Loaded Hack Squat'],
+    ['plate_loaded', 'leverage_squat_plate', 'Leverage Squat (Plate-Loaded)'], ['plate_loaded', 'reverse_hack_squat_plate', 'Reverse Hack Squat (Plate-Loaded)', { regions: { vasti: 0.9, glute_max: 0.7, ham_hinge: 0.3 } }],
   ]),
   M('pendulum_squat', 'quads', true, { vasti: 1, glute_max: 0.4 }, {}, [
     ['plate_loaded', null, 'Pendulum Squat'],
@@ -220,7 +230,7 @@ export const MOVEMENTS = [
     ['machine', 'single_leg_extension', 'Single-Leg Extension', { unilateral: true }],
   ]),
   M('sissy_squat', 'quads', false, { rectus_femoris: 1, vasti: 0.6 }, {}, [
-    ['bodyweight', 'sissy_squat', null],
+    ['bodyweight', 'sissy_squat', null], ['machine', 'sissy_squat_machine', 'Sissy Squat Machine'],
   ]),
 
   // ---------- Hamstrings ----------
@@ -243,6 +253,7 @@ export const MOVEMENTS = [
   ]),
   M('standing_leg_curl', 'hamstrings', false, { ham_curl: 1 }, { position: 'standing' }, [
     ['machine', null, 'Standing Single-Leg Curl', { unilateral: true }], ['cable', null, 'Cable Leg Curl', { unilateral: true }],
+    ['machine', 'kneeling_leg_curl', 'Kneeling Leg Curl Machine', { unilateral: true }],
   ]),
   M('nordic_curl', 'hamstrings', false, { ham_curl: 1 }, {}, [
     ['bodyweight', 'nordic_curl', null, { hard: true }],
@@ -259,10 +270,16 @@ export const MOVEMENTS = [
   ]),
   M('glute_kickback', 'glutes', false, { glute_max: 1, glute_med: 0.3 }, {}, [
     ['cable', 'glute_kickback', null, { unilateral: true }], ['machine', null, 'Glute Kickback Machine', { unilateral: true }],
+    ['plate_loaded', null, 'Plate-Loaded Glute Kickback', { unilateral: true }], ['machine', 'multi_hip_extension', 'Multi-Hip Machine (Hip Extension)', { unilateral: true }],
   ]),
   M('hip_abduction', 'glutes', false, { glute_med: 1 }, {}, [
-    ['machine', 'hip_abduction', null], ['cable', null, 'Cable Hip Abduction', { unilateral: true }],
+    ['machine', 'hip_abduction', 'Hip Abduction Machine (Outer Thigh)'], ['cable', null, 'Cable Hip Abduction', { unilateral: true }],
+    ['machine', 'standing_abduction_machine', 'Standing Hip Abduction Machine (Multi-Hip)', { unilateral: true }],
+    ['plate_loaded', null, 'Plate-Loaded Hip Abduction'],
     ['bodyweight', 'side_lying_leg_raise', null],
+  ]),
+  M('reverse_hyper', 'glutes', false, { glute_max: 1, ham_hinge: 0.5, lower_back: 0.5 }, { position: 'lying' }, [
+    ['machine', null, 'Reverse Hyper Machine'],
   ]),
   M('pull_through', 'glutes', true, { glute_max: 1, ham_hinge: 0.5 }, {}, [
     ['cable', null, 'Cable Pull-Through'], ['kettlebell', null, 'Kettlebell Swing', { regions: { glute_max: 1, ham_hinge: 0.6, lower_back: 0.3 } }],
@@ -273,6 +290,7 @@ export const MOVEMENTS = [
     ['machine', 'standing_calf_raise', null], ['dumbbell', 'db_calf_raise', null, { unilateral: true }],
     ['smith', null, 'Smith Machine Calf Raise'], ['bodyweight', null, 'Bodyweight Calf Raise'],
     ['machine', 'leg_press_calf_raise', 'Leg Press Calf Raise'], ['plate_loaded', null, 'Plate-Loaded Standing Calf Raise'],
+    ['machine', 'donkey_calf_raise', 'Donkey Calf Raise Machine'],
   ]),
   M('seated_calf_raise', 'calves', false, { soleus: 1, gastrocnemius: 0.3 }, { position: 'seated' }, [
     ['machine', 'seated_calf_raise', null], ['dumbbell', 'db_seated_calf_raise', null], ['plate_loaded', null, 'Plate-Loaded Seated Calf Raise'],
@@ -281,7 +299,8 @@ export const MOVEMENTS = [
   // ---------- Abs ----------
   M('crunch', 'abs', false, { abs_rectus: 1, obliques: 0.3 }, {}, [
     ['cable', 'cable_crunch', null], ['machine', 'ab_machine', null], ['bodyweight', null, 'Crunch'],
-    ['plate_loaded', null, 'Plate-Loaded Ab Crunch'],
+    ['plate_loaded', null, 'Plate-Loaded Ab Crunch'], ['machine', 'ab_coaster', 'Ab Coaster', { regions: { abs_rectus: 1, obliques: 0.3 } }],
+    ['machine', 'oblique_crunch_machine', 'Oblique Crunch Machine', { regions: { obliques: 1, abs_rectus: 0.4 } }],
   ]),
   M('leg_raise', 'abs', false, { abs_rectus: 1, obliques: 0.3, forearm_flexors: 0.2 }, {}, [
     ['bodyweight', 'hanging_leg_raise', null], ['bodyweight', 'captains_chair_raise', "Captain's Chair Leg Raise", { regions: { abs_rectus: 1, obliques: 0.3 } }],
@@ -301,6 +320,7 @@ export const MOVEMENTS = [
   // ---------- Forearms ----------
   M('wrist_curl', 'forearms', false, { forearm_flexors: 1 }, {}, [
     ['dumbbell', 'wrist_curl', null], ['barbell', null, 'Barbell Wrist Curl'], ['cable', null, 'Cable Wrist Curl'],
+    ['machine', 'wrist_curl_machine', 'Wrist Curl Machine'],
   ]),
   M('reverse_wrist_curl', 'forearms', false, { forearm_extensors: 1 }, {}, [
     ['dumbbell', 'reverse_wrist_curl', null], ['barbell', null, 'Barbell Reverse Wrist Curl'],
@@ -314,7 +334,8 @@ export const MOVEMENTS = [
 
   // ---------- Adductors ----------
   M('adduction', 'adductors', false, { adductors: 1 }, { position: 'seated' }, [
-    ['machine', 'adductor_machine', null], ['cable', null, 'Cable Hip Adduction', { unilateral: true }],
+    ['machine', 'adductor_machine', 'Hip Adduction Machine (Inner Thigh)'], ['cable', null, 'Cable Hip Adduction', { unilateral: true }],
+    ['machine', 'standing_adduction_machine', 'Standing Hip Adduction Machine (Multi-Hip)', { unilateral: true }],
   ]),
   M('sumo_squat', 'adductors', true, { adductors: 0.9, vasti: 0.6, glute_max: 0.6 }, {}, [
     ['dumbbell', 'sumo_squat', null], ['kettlebell', null, 'Kettlebell Sumo Squat'], ['barbell', null, 'Barbell Sumo Squat'],

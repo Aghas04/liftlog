@@ -91,3 +91,30 @@ test('works with no plan, no settings and no active workout', () => {
   const { state } = mergeExercise(st, 'c_plated', PLATE);
   assert.equal(state.workouts[0].exercises[0].exId, PLATE);
 });
+
+test('move history between two library lifts: all, or only chosen workouts', async () => {
+  const { moveHistory } = await import('../js/merge.js');
+  const st = {
+    workouts: [
+      { id: 'a', date: day(9), exercises: [{ exId: 'machine_chest_press', sets: sets(100, [10, 9]) }] },
+      { id: 'b', date: day(6), exercises: [{ exId: 'machine_chest_press', sets: sets(110, [8]) }, { exId: 'cable_fly', sets: sets(30, [12]) }] },
+      { id: 'c', date: day(3), exercises: [{ exId: 'machine_chest_press', sets: sets(60, [12]) }] },
+    ],
+    exerciseSettings: { machine_chest_press: { note: 'seat 3', increment: 10 } },
+  };
+  const plate = 'flat_press_plate_loaded';
+  // Only the first two were the plate-loaded machine.
+  const part = moveHistory(st, 'machine_chest_press', plate, ['a', 'b']);
+  assert.deepEqual(part.moved, { workouts: 2, sets: 3, all: false });
+  assert.deepEqual(part.state.workouts.map(w => w.exercises[0].exId), [plate, plate, 'machine_chest_press']);
+  assert.equal(part.state.workouts[1].exercises[1].exId, 'cable_fly', 'other lifts untouched');
+  assert.equal(part.state.exerciseSettings[plate], undefined, 'settings stay when some history stays');
+  // Everything.
+  const full = moveHistory(st, 'machine_chest_press', plate);
+  assert.deepEqual(full.moved, { workouts: 3, sets: 4, all: true });
+  assert.deepEqual(full.state.exerciseSettings[plate], { note: 'seat 3', increment: 10 });
+  // Sets are identical, nothing lost; the original is untouched (for undo).
+  assert.deepEqual(full.state.workouts[0].exercises[0].sets, st.workouts[0].exercises[0].sets);
+  assert.equal(st.workouts[0].exercises[0].exId, 'machine_chest_press');
+  assert.throws(() => moveHistory(st, 'machine_chest_press', 'machine_chest_press'));
+});

@@ -191,7 +191,8 @@ for (const mv of MOVEMENTS) {
     const existing = id && EXERCISES.find(e => e.id === id);
     const attrs = { movement: mv.key, ...mv.attrs, ...(extra.unilateral ? { unilateral: true } : {}), ...(extra.grip ? { grip: extra.grip } : {}) };
     if (existing) {
-      Object.assign(existing, attrs, { equipment, common: true }, extra.hard ? { hard: true } : {});
+      // A name here renames the existing exercise (its id, and so its history, stay).
+      Object.assign(existing, attrs, { equipment, common: true }, name ? { name } : {}, extra.hard ? { hard: true } : {});
       continue;
     }
     EXERCISES.push({
