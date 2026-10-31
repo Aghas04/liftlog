@@ -770,3 +770,4 @@ label.btn { cursor: pointer; }
 .works-row:not(.main) .works-bar i { background: color-mix(in srgb, var(--accent) 50%, transparent); }
 .works-row em { font-style: normal; font-size: 11px; color: var(--muted); text-align: right; }
 #sheet p svg { width: 14px; height: 14px; vertical-align: -2px; }
+.badge.cover { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }

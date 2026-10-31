@@ -108,12 +108,12 @@ const isAssist = ex => ex.equipment === 'assisted';
 const shownW = (ex, w) => (isAssist(ex) && w != null && w !== '' ? -w : w);
 const stars = () => state.settings.gymStars || [];
 
-function toast(msg) {
+function toast(msg, ms = 2200) {
   const el = document.createElement('div');
   el.className = 'toast';
   el.textContent = msg;
   document.body.appendChild(el);
-  setTimeout(() => el.remove(), 2200);
+  setTimeout(() => el.remove(), ms);
 }
 
 const fmtK = v => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? Math.round(v / 1000) + 'k' : Math.round(v).toLocaleString());
@@ -1349,10 +1349,10 @@ function keepPlanCurrent() {
   else if (r.events.includes('resumed')) setTimeout(() => toast('Plan resumed'), 300);
 }
 
-const planWeekNow = () => (state.plan ? currentWeek(state.plan, state.workouts, exercise, Date.now(), pace()) : null);
+const planWeekNow = () => (state.plan ? currentWeek(state.plan, state.workouts, exercise, Date.now(), pace(), planCtx()) : null);
 const planDayBySeq = (week, seq) => week?.days.find(d => d.kind === 'train' && d.session.seq === seq) || null;
 // This week plus a projection up to 6 days past today.
-const planUpcoming = () => upcomingDays(state.plan, state.workouts, exercise, Date.now(), pace());
+const planUpcoming = () => upcomingDays(state.plan, state.workouts, exercise, Date.now(), pace(), planCtx());
 const sessionMuscles = s => [...new Set(s.items.map(i => i.muscle))].map(m => MUSCLES[m]).join(' · ');
 
 // Home: today's planned workout leads.
@@ -1494,10 +1494,15 @@ function applyPlanEdit(seq, i, action, to) {
   const day = planDayBySeq(planUpcoming(), seq);
   const it = day?.session.items[i];
   if (!it) return;
-  const r = editSession(state.plan, { seq, type: day.session.type, slot: day.session.slot, action, from: it.exId, to, scope }, planCtx());
+  const weekOf = p => currentWeek(p, state.workouts, exercise, Date.now(), pace());
+  // A lift swapped in to cover a part this week: the edit applies to the planned one.
+  const r = editSession(state.plan, { seq, type: day.session.type, slot: day.session.slot, action, from: it.orig || it.exId, to, scope }, { ...planCtx(), weekOf });
   state.plan = r.plan;
   save();
+  // Say what else moved so every part stays trained.
+  const also = r.changes.map(c => `${c.name || `${PLAN_DAYS[c.type].name} ${slotLetter(c.slot)}`}: ${exercise(c.to).name} for ${REGIONS[c.region].name.toLowerCase()}`);
   if (r.learned) toast(`Got it — ${exercise(r.learned).name} won't be planned anymore`);
+  else if (also.length) toast(`Changed. To keep everything trained: ${also.join('; ')}`, 5000);
   else toast(scope === 'block' ? 'Changed for the rest of the block' : 'Changed for this session');
   openSheet({ type: 'planSession', seq, scope });
   render();
@@ -2253,7 +2258,8 @@ function sheetHtml() {
       for (const it of ss.items) if (it.superset && !letters[it.superset]) letters[it.superset] = slotLetter(Object.keys(letters).length);
       const rows = ss.items.map((it, i) => {
         const ex = exercise(it.exId);
-        const badges = [it.main ? '<em class="badge">Main lift</em>' : '', it.superset ? `<em class="badge ss">Superset ${letters[it.superset]}</em>` : ''].join('');
+        const badges = [it.main ? '<em class="badge">Main lift</em>' : '', it.superset ? `<em class="badge ss">Superset ${letters[it.superset]}</em>` : '',
+          it.covers ? `<em class="badge cover">This week: covers ${esc(REGIONS[it.covers].name.toLowerCase())}</em>` : ''].join('');
         return `<div class="bp-row" style="--c:${dt.color}">
           <div class="bp-main"><span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[it.muscle]}</span>
             <b>${esc(ex.name)}</b><small>${it.sets} sets · ${itemZone(it)}${badges}</small></div>

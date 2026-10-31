@@ -509,28 +509,42 @@ export function planWeek(input) {
   const remaining = Object.fromEntries(Object.keys(MUSCLES).map(m => [m, Math.max(0, targets[m] - (doneMuscle[m] || 0))]));
   const sessionsWith = m => order.filter(o => PLAN_DAYS[o.type].muscles.includes(m));
 
+  // Each session's lifts with this week's edits (swap/remove) applied.
+  const edits = plan.weekEdits || {};
+  const sessions = order.map(o => {
+    const variant = JSON.parse(JSON.stringify(plan.slots[o.type]?.[o.slot] || plan.slots[o.type]?.[0] || {}));
+    const e = edits[o.seq];
+    if (e) {
+      for (const [from, to] of Object.entries(e.replace || {})) for (const m of Object.keys(variant)) variant[m] = variant[m].map(x => (x === from ? to : x));
+      for (const rm of e.remove || []) for (const m of Object.keys(variant)) variant[m] = variant[m].filter(x => x !== rm);
+    }
+    return { ...o, variant };
+  });
+  // Most sets a session can hold for a muscle: 4 per lift, never past the cap.
+  // If lifts were removed, the sets that no longer fit go to other sessions.
+  const capOf = (i, m) => Math.min(PER_SESSION_CAP, 4 * (sessions[i].variant[m] || []).length);
   const perSession = order.map(() => ({}));
   const assign = muscles => {
     for (const m of muscles) {
-      const idx = order.map((o, i) => (PLAN_DAYS[o.type].muscles.includes(m) ? i : -1)).filter(i => i >= 0);
+      const idx = order.map((o, i) => (PLAN_DAYS[o.type].muscles.includes(m) && capOf(i, m) > 0 ? i : -1)).filter(i => i >= 0);
       if (!idx.length) continue;
-      // Split the remaining sets exactly (9 over 2 sessions = 5 + 4), so the
-      // week adds up to its goal instead of drifting with per-session rounding.
-      const total = Math.round(remaining[m]);
-      const base = Math.floor(total / idx.length);
-      let extra = total - base * idx.length;
+      // Hand out the remaining sets one at a time across sessions with room,
+      // so the week adds up exactly (9 over 2 = 5 + 4) and nothing overflows.
+      let total = Math.round(remaining[m]);
+      const got = Object.fromEntries(idx.map(i => [i, 0]));
+      while (total > 0 && idx.some(i => got[i] < capOf(i, m))) {
+        for (const i of idx) { if (total > 0 && got[i] < capOf(i, m)) { got[i]++; total--; } }
+      }
       for (const i of idx) {
-        let s = Math.min(PER_SESSION_CAP, base + (extra > 0 ? 1 : 0));
-        if (extra > 0) extra--;
-        if (s > 0 && s < 2) s = 2;
-        s = Math.max(s, minSets[m] || 0);
-        perSession[i][m] = s;
+        let n = got[i];
+        if (n > 0 && n < 2) n = 2;
+        n = Math.min(capOf(i, m), Math.max(n, minSets[m] || 0));
+        perSession[i][m] = n;
       }
     }
   };
   // Big muscles first, then subtract their indirect work from small muscles.
   assign(MAJOR);
-  const sessions = order.map((o, i) => ({ ...o, variant: plan.slots[o.type]?.[o.slot] || plan.slots[o.type]?.[0] || {} }));
   for (let i = 0; i < sessions.length; i++) {
     for (const m of MAJOR) {
       const list = sessions[i].variant[m] || [];
@@ -548,16 +562,9 @@ export function planWeek(input) {
   }
   assign(Object.keys(MUSCLES).filter(m => !MAJOR.includes(m)));
 
-  // Apply this week's edits (swap/remove) and build each session.
-  const edits = plan.weekEdits || {};
+  // Build each session.
   sessions.forEach((s, i) => {
-    const variant = JSON.parse(JSON.stringify(s.variant));
-    const e = edits[s.seq];
-    if (e) {
-      for (const [from, to] of Object.entries(e.replace || {})) for (const m of Object.keys(variant)) variant[m] = variant[m].map(x => (x === from ? to : x));
-      for (const rm of e.remove || []) for (const m of Object.keys(variant)) variant[m] = variant[m].filter(x => x !== rm);
-    }
-    const built = buildSession({ type: s.type, variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec: Math.max(60, secPerSet - 40) });
+    const built = buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec: Math.max(60, secPerSet - 40) });
     const day = remainingDays[i];
     out[day].kind = 'train';
     out[day].session = {

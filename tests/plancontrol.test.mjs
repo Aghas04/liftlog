@@ -666,3 +666,154 @@ test("machines your gym doesn't have are never planned or used as replacements",
   const repl = replacementFor('squat', { plan, exercises: p.exercises, lookup, blocked });
   assert.ok(repl && !settings.notAtGym.includes(repl.id));
 });
+
+// ---------- Edits keep every part covered ----------
+const { exerciseRegions: regsOf, REGIONS: REG } = await import('../js/data.js');
+const leadParts = (plan, type, m) => {
+  const out = new Set();
+  for (const v of plan.slots[type]) for (const id of (v[m] || []).slice(0, 2)) for (const [r, w] of Object.entries(regsOf(lookup(id)))) if (w >= 0.75 && REG[r].muscle === m) out.add(r);
+  return out;
+};
+// A lift in Upper A that is the only lead lift covering some part of its muscle.
+function soleCoverer(plan, type = 'upper') {
+  for (const m of Object.keys(plan.slots[type][0])) {
+    const before = leadParts(plan, type, m);
+    for (const id of (plan.slots[type][0][m] || []).slice(0, 2)) {
+      const without = JSON.parse(JSON.stringify(plan));
+      without.slots[type][0][m] = without.slots[type][0][m].filter(x => x !== id);
+      const lost = [...before].filter(r => !leadParts(without, type, m).has(r));
+      if (lost.length) return { m, id, lost };
+    }
+  }
+  return null;
+}
+
+test('a rest-of-block swap that drops a part puts it back in another A/B/C session', () => {
+  const plan = fresh({ ...profile, days: [0, 1, 2, 3, 4, 5] }, 'upper_lower', MONDAY - 7 * DAY);
+  const sole = soleCoverer(plan);
+  assert.ok(sole, 'found a lift that alone covers a part');
+  const before = leadParts(plan, 'upper', sole.m);
+  // Swap it for a same-muscle lift that trains a different part.
+  const to = EXERCISES.find(e => e.muscle === sole.m && e.common && !sole.lost.some(r => (e.regions[r] || 0) >= 0.75) && !plan.slots.upper[0][sole.m].includes(e.id));
+  const r = editSession(plan, { seq: 0, type: 'upper', slot: 0, action: 'swap', from: sole.id, to: to.id, scope: 'block' }, ctx);
+  assert.ok(r.plan.slots.upper[0][sole.m].includes(to.id), 'your choice is kept');
+  const after = leadParts(r.plan, 'upper', sole.m);
+  for (const p of before) assert.ok(after.has(p), `${p} lost after swapping ${sole.id} for ${to.id}`);
+  assert.ok(r.changes.length >= 1, 'something else changed to make up for it');
+});
+
+test('a rest-of-block removal also keeps every part covered', () => {
+  const plan = fresh({ ...profile, days: [0, 1, 2, 3, 4, 5] }, 'upper_lower', MONDAY - 7 * DAY);
+  const sole = soleCoverer(plan);
+  const before = leadParts(plan, 'upper', sole.m);
+  const r = editSession(plan, { seq: 0, type: 'upper', slot: 0, action: 'remove', from: sole.id, scope: 'block' }, ctx);
+  assert.ok(!r.plan.slots.upper[0][sole.m].includes(sole.id));
+  const after = leadParts(r.plan, 'upper', sole.m);
+  for (const p of before) assert.ok(after.has(p), `${p} lost`);
+});
+
+test('a swap within the same part changes nothing else', () => {
+  const plan = fresh({ ...profile, days: [0, 1, 2, 3, 4, 5] }, 'upper_lower', MONDAY - 7 * DAY);
+  const from = plan.slots.upper[0].chest[0];
+  const same = replacementFor(from, { plan, ...ctx, type: 'upper', exclude: plan.slots.upper[0].chest });
+  const r = editSession(plan, { seq: 0, type: 'upper', slot: 0, action: 'swap', from, to: same.id, scope: 'block' }, ctx);
+  assert.deepEqual(r.changes, []);
+  assert.deepEqual(r.plan.slots.upper.slice(1), plan.slots.upper.slice(1));
+});
+
+test('a this-session removal is made up later in the same week', () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  const plan = fresh(p6, 'upper_lower', MONDAY - 7 * DAY);
+  const weekOf = p => currentWeek(p, [], lookup, MONDAY);
+  const wk = weekOf(plan);
+  const sessions = wk.days.filter(d => d.kind === 'train');
+  const partsThisWeek = (w, m) => {
+    const out = new Set();
+    for (const d of w.days.filter(x => x.kind === 'train')) for (const it of d.session.items) if (it.muscle === m) for (const [r, wt] of Object.entries(regsOf(lookup(it.exId)))) if (wt >= 0.75 && REG[r].muscle === m) out.add(r);
+    return out;
+  };
+  // Find a lift in Monday's session that is the only one this week covering a part.
+  let target = null;
+  for (const it of sessions[0].session.items) {
+    const before = partsThisWeek(wk, it.muscle);
+    const tmp = editSession(plan, { seq: sessions[0].session.seq, type: sessions[0].session.type, slot: sessions[0].session.slot, action: 'remove', from: it.exId, scope: 'week' }, ctx).plan;
+    if ([...before].some(r => !partsThisWeek(weekOf(tmp), it.muscle).has(r))) { target = it; break; }
+  }
+  assert.ok(target, 'found a lift that alone covers a part this week');
+  const before = partsThisWeek(wk, target.muscle);
+  const r = editSession(plan, { seq: sessions[0].session.seq, type: sessions[0].session.type, slot: sessions[0].session.slot, action: 'remove', from: target.exId, scope: 'week' }, { ...ctx, weekOf });
+  const after = partsThisWeek(weekOf(r.plan), target.muscle);
+  for (const p of before) assert.ok(after.has(p), `${p} not made up this week`);
+  assert.ok(r.changes.length >= 1 && r.changes.every(c => c.seq !== sessions[0].session.seq));
+  // The block itself is untouched by a one-session edit.
+  assert.deepEqual(r.plan.slots, plan.slots);
+});
+
+test('the week adapts to what you actually did so every part gets trained', async () => {
+  const { coverWeek } = await import('../js/plancontrol.js');
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  const plan = fresh(p6, 'upper_lower', MONDAY - 7 * DAY);
+  const wctx = { ...ctx };
+  // A normal week changes nothing.
+  const plain = currentWeek(plan, [], lookup, MONDAY, 130, wctx);
+  assert.ok(!plain.days.some(d => d.kind === 'train' && d.session.items.some(i => i.covers)), 'nothing swapped in a normal week');
+  const latsIn = w => w.days.filter(d => d.kind === 'train').some(d => d.session.items.some(i => (lookup(i.exId).regions.lats || 0) >= 0.75));
+  // Strip every lats lift out of the plan's later sessions this week except Monday's,
+  // then do Monday without its lats lift: the rest of the week must add lats back.
+  const mon = currentWeek(plan, [], lookup, MONDAY).days[0];
+  assert.equal(mon.session.type, 'upper');
+  const did = doSession(plan, mon, MONDAY);
+  did.exercises = did.exercises.filter(e => (lookup(e.exId).regions.lats || 0) < 0.75);
+  const noLatsPlan = JSON.parse(JSON.stringify(plan));
+  for (const v of noLatsPlan.slots.upper.slice(1)) v.back = v.back.filter(id => (lookup(id).regions.lats || 0) < 0.75);
+  const raw = currentWeek(noLatsPlan, [did], lookup, MONDAY + DAY);
+  assert.ok(!latsIn(raw), 'set-up: no lats left this week before adapting');
+  const fixed = coverWeek(raw, plan, [did], wctx);
+  assert.ok(latsIn(fixed), 'a later session picks up lats');
+  const swapped = fixed.days.flatMap(d => d.kind === 'train' ? d.session.items : []).filter(i => i.covers);
+  assert.ok(swapped.length >= 1 && swapped.every(i => i.orig && i.orig !== i.exId));
+  // Lots of lats work done off-plan: nothing extra needed.
+  const offLats = offPlan('ol', MONDAY, [['lat_pulldown', 4], ['pull_up', 3]]);
+  const w2 = coverWeek(currentWeek(noLatsPlan, [offLats], lookup, MONDAY + DAY), plan, [offLats], wctx);
+  assert.ok(!w2.days.some(d => d.kind === 'train' && d.session.items.some(i => i.covers === 'lats')));
+});
+
+test('a full 6-week run with the adaptive week stays valid and covers every planned part weekly', () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  let plan = fresh(p6, 'upper_lower', MONDAY - 7 * DAY);
+  const workouts = [];
+  for (let d = 0; d < 42; d++) {
+    const t = MONDAY + d * DAY + 9 * 3600000;
+    plan = maintainPlan(plan, workouts, t, lookup).plan;
+    const day = todayOf(currentWeek(plan, workouts, lookup, t, 130, ctx), t);
+    if (day.kind !== 'train') continue;
+    const ids = day.session.items.map(i => i.exId);
+    assert.equal(new Set(ids).size, ids.length, `day ${d}: duplicate lift`);
+    const w = doSession(plan, day, t);
+    // Every third session, skip its last lift (like dropping one mid-workout).
+    if (d % 3 === 0) w.exercises.pop();
+    workouts.push(w);
+  }
+  assert.ok(workouts.length >= 30);
+});
+
+test("removing lifts from a session moves its sets to the week's other sessions", () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  let plan = fresh(p6, 'upper_lower', MONDAY - 7 * DAY);
+  const backSets = w => w.days.filter(d => d.kind === 'train').reduce((a, d) => a + d.session.items.filter(i => i.muscle === 'back').reduce((b, i) => b + i.sets, 0), 0);
+  const wk = currentWeek(plan, [], lookup, MONDAY);
+  const before = backSets(wk);
+  // Strip all but one back lift from Monday's session, for this session only.
+  const mon = wk.days[0].session;
+  // Keep removing (spare lifts move up) until one back lift is left.
+  for (let g = 0; g < 6; g++) {
+    const left = currentWeek(plan, [], lookup, MONDAY).days[0].session.items.filter(i => i.muscle === 'back');
+    if (left.length <= 1) break;
+    plan = editSession(plan, { seq: mon.seq, type: mon.type, slot: mon.slot, action: 'remove', from: left.at(-1).exId, scope: 'week' }, ctx).plan;
+  }
+  const after = currentWeek(plan, [], lookup, MONDAY);
+  const monBack = after.days[0].session.items.filter(i => i.muscle === 'back');
+  assert.equal(monBack.length, 1);
+  assert.ok(monBack[0].sets <= 4, 'one lift holds at most 4 sets');
+  assert.ok(backSets(after) >= before - 1, `week back sets ${backSets(after)} vs ${before} before`);
+});
