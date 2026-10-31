@@ -1,6 +1,6 @@
 // Exercise search: filters plus forgiving word matching, so "plated incline
 // bench" finds "Plate-Loaded Incline Press" and "pin row" finds the machine row.
-import { MUSCLES, EQUIPMENT } from './data.js';
+import { MUSCLES, EQUIPMENT, REGIONS } from './data.js';
 
 // Words that mean the same thing. Each group maps to its first word.
 const GROUPS = [
@@ -47,6 +47,10 @@ const GROUPS = [
   ['adduction', 'adductor', 'adductors', 'inner', 'adduct'],
   ['abduction', 'abductor', 'abductors', 'outer', 'abduct'],
   ['thigh', 'thighs'],
+  ['twist', 'twists', 'rotation', 'rotations'],
+  ['oblique', 'obliques'],
+  ['situp', 'situps'],
+  ['crunch', 'crunches'],
   ['multihip', 'multi'],
 ];
 const CANON = new Map();
@@ -68,6 +72,8 @@ function wordsOf(ex) {
   if (ex.position) words.add(canon(ex.position));
   if (ex.unilateral) words.add('single');
   for (const w of tokenize(MUSCLES[ex.muscle])) words.add(canon(w));
+  // The parts it mainly works, so "obliques" or "rear delts" find it.
+  for (const [r, wt] of Object.entries(ex.regions || {})) if (wt >= 0.75 && REGIONS[r]) for (const w of tokenize(REGIONS[r].name)) words.add(canon(w));
   return words;
 }
 const cache = new WeakMap();
@@ -106,7 +112,10 @@ export function searchExercises(list, query = '', filters = {}, rank = {}) {
     // Words found in the name itself count more than ones matched via muscle or equipment.
     const nameWords = new Set([...tokenize(ex.name), ...joined(ex.name)].map(canon));
     const inName = queryWords(query).filter(w => hit(nameWords, w)).length;
-    out.push({ ex, score: (exact ? 100 : 0) + inName * 5 + (stars.has(ex.id) ? 20 : 0) + (usage[ex.id] ? 4 + Math.min(usage[ex.id], 10) : 0) + (ex.common ? 3 : 0) - ex.name.length / 100 });
+    // Naming a whole part it mainly works ("upper chest", "rear delts") counts most.
+    const qw = queryWords(query);
+    const part = Object.entries(ex.regions || {}).some(([r, wt]) => wt >= 0.75 && REGIONS[r] && tokenize(REGIONS[r].name).map(canon).filter(w => w.length > 1).every(w => qw.includes(w)));
+    out.push({ ex, score: (exact ? 100 : 0) + (part ? 8 : 0) + inName * 5 + (stars.has(ex.id) ? 20 : 0) + (usage[ex.id] ? 4 + Math.min(usage[ex.id], 10) : 0) + (ex.common ? 3 : 0) - ex.name.length / 100 });
   }
   return out.sort((a, b) => b.score - a.score || a.ex.name.localeCompare(b.ex.name)).map(x => x.ex);
 }

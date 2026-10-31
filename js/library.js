@@ -300,13 +300,19 @@ export const MOVEMENTS = [
   M('crunch', 'abs', false, { abs_rectus: 1, obliques: 0.3 }, {}, [
     ['cable', 'cable_crunch', null], ['machine', 'ab_machine', null], ['bodyweight', null, 'Crunch'],
     ['plate_loaded', null, 'Plate-Loaded Ab Crunch'], ['machine', 'ab_coaster', 'Ab Coaster', { regions: { abs_rectus: 1, obliques: 0.3 } }],
+    ['bodyweight', 'ball_crunch', 'Stability Ball Crunch'], ['cable', 'standing_cable_crunch', 'Standing Cable Crunch'],
     ['machine', 'oblique_crunch_machine', 'Oblique Crunch Machine', { regions: { obliques: 1, abs_rectus: 0.4 } }],
   ]),
   M('leg_raise', 'abs', false, { abs_rectus: 1, obliques: 0.3, forearm_flexors: 0.2 }, {}, [
     ['bodyweight', 'hanging_leg_raise', null], ['bodyweight', 'captains_chair_raise', "Captain's Chair Leg Raise", { regions: { abs_rectus: 1, obliques: 0.3 } }],
+    ['bodyweight', 'hanging_knee_raise', 'Hanging Knee Raise', { regions: { abs_rectus: 1, obliques: 0.2, forearm_flexors: 0.2 } }],
+    ['bodyweight', 'toes_to_bar', 'Toes-to-Bar', { hard: true, regions: { abs_rectus: 1, obliques: 0.3, lats: 0.2, forearm_flexors: 0.3 } }],
+    ['bodyweight', 'lying_leg_raise', 'Lying Leg Raise', { regions: { abs_rectus: 1 } }],
+    ['bodyweight', 'decline_leg_raise', 'Decline Bench Leg Raise', { regions: { abs_rectus: 1 } }],
   ]),
   M('situp', 'abs', false, { abs_rectus: 1, obliques: 0.2 }, { angle: 'decline' }, [
-    ['bodyweight', 'decline_situp', null],
+    ['bodyweight', 'decline_situp', null], ['bodyweight', 'situp_flat', 'Sit-up'],
+    ['dumbbell', 'weighted_decline_situp', 'Weighted Decline Sit-up'],
   ]),
   M('ab_wheel', 'abs', false, { abs_rectus: 1, obliques: 0.3, lats: 0.2 }, {}, [
     ['bodyweight', 'ab_wheel', null],
@@ -315,6 +321,31 @@ export const MOVEMENTS = [
     ['cable', 'cable_woodchop', null], ['dumbbell', 'db_side_bend', null, { regions: { obliques: 1 } }],
     ['cable', 'pallof_press', 'Pallof Press', { regions: { obliques: 1, abs_rectus: 0.4 } }],
     ['machine', null, 'Rotary Torso Machine'],
+    ['cable', 'cable_side_bend', 'Cable Side Bend', { regions: { obliques: 1 } }],
+    ['cable', 'cable_oblique_crunch', 'Cable Oblique Crunch', { regions: { obliques: 1, abs_rectus: 0.4 } }],
+    ['barbell', 'landmine_rotation', 'Landmine Rotation', { regions: { obliques: 1, abs_rectus: 0.3, delt_front: 0.2 } }],
+    ['bodyweight', 'heel_touches', 'Heel Touches', { regions: { obliques: 1, abs_rectus: 0.3 } }],
+    ['bodyweight', 'windshield_wiper', 'Hanging Windshield Wiper', { hard: true, regions: { obliques: 1, abs_rectus: 0.5, forearm_flexors: 0.3 } }],
+  ]),
+
+  M('russian_twist', 'abs', false, { obliques: 1, abs_rectus: 0.4 }, { position: 'seated' }, [
+    ['bodyweight', 'russian_twist', 'Russian Twist'], ['dumbbell', 'weighted_russian_twist', 'Weighted Russian Twist (Dumbbell or Plate)'],
+    ['kettlebell', null, 'Kettlebell Russian Twist'],
+  ]),
+  M('bicycle_crunch', 'abs', false, { abs_rectus: 1, obliques: 0.7 }, { position: 'lying' }, [
+    ['bodyweight', 'bicycle_crunch', 'Bicycle Crunch'],
+  ]),
+  M('reverse_crunch', 'abs', false, { abs_rectus: 1, obliques: 0.2 }, { position: 'lying' }, [
+    ['bodyweight', 'reverse_crunch', 'Reverse Crunch'], ['bodyweight', 'decline_reverse_crunch', 'Decline Reverse Crunch'],
+  ]),
+  M('v_up', 'abs', false, { abs_rectus: 1, obliques: 0.3 }, { position: 'lying' }, [
+    ['bodyweight', 'v_up', 'V-Up'], ['dumbbell', 'weighted_v_up', 'Weighted V-Up'],
+  ]),
+  M('dead_bug', 'abs', false, { abs_rectus: 1, obliques: 0.4 }, { position: 'lying' }, [
+    ['bodyweight', 'dead_bug', 'Dead Bug'],
+  ]),
+  M('dragon_flag', 'abs', false, { abs_rectus: 1, obliques: 0.3, lats: 0.2 }, { position: 'lying' }, [
+    ['bodyweight', 'dragon_flag', 'Dragon Flag', { hard: true }],
   ]),
 
   // ---------- Forearms ----------

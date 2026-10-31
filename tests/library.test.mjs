@@ -123,3 +123,20 @@ test('moving history from a library lift suggests its other versions first', () 
   assert.ok(top.slice(0, 3).every(e => e.movement === from.movement), top.map(e => e.name).join(', '));
   assert.ok(top.some(e => e.name === 'Plate-Loaded Chest Press'));
 });
+
+test('library: ab exercises cover both parts, and search finds them by name or target', () => {
+  for (const n of ['Russian Twist', 'Weighted Russian Twist (Dumbbell or Plate)', 'Bicycle Crunch', 'Reverse Crunch', 'Lying Leg Raise', 'Hanging Knee Raise',
+    'V-Up', 'Dead Bug', 'Sit-up', 'Cable Side Bend', 'Heel Touches', 'Landmine Rotation', 'Stability Ball Crunch', 'Toes-to-Bar', 'Dragon Flag']) {
+    assert.ok(byName(n), `${n} missing`);
+  }
+  assert.equal(byName('Russian Twist').regions.obliques, 1, 'russian twists mainly work the obliques');
+  const top = q => searchExercises(EXERCISES, q)[0]?.name;
+  assert.equal(top('russian twist'), 'Russian Twist');
+  assert.equal(top('sit up'), 'Sit-up');
+  // By the part it works.
+  assert.ok(searchExercises(EXERCISES, 'obliques').slice(0, 6).every(e => e.regions.obliques >= 0.75));
+  assert.ok(searchExercises(EXERCISES, 'upper chest').slice(0, 4).every(e => e.regions.chest_upper >= 0.75));
+  assert.ok(searchExercises(EXERCISES, 'rear delts').slice(0, 4).every(e => e.regions.delt_rear >= 0.75));
+  // "side" alone no longer drags in glute exercises for oblique searches.
+  assert.ok(!searchExercises(EXERCISES, 'obliques').some(e => e.muscle === 'glutes'));
+});

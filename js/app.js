@@ -1756,6 +1756,15 @@ function keepOut(i, msg) {
   toast(msg);
 }
 
+// Which parts of which muscles an exercise works, strongest first.
+function worksHtml(ex) {
+  const regs = Object.entries(exerciseRegions(ex)).filter(([r]) => REGIONS[r]).sort((a, b) => b[1] - a[1]);
+  const label = w => (w >= DIRECT ? 'Main' : w >= 0.4 ? 'Helps' : 'A little');
+  return `<div class="works"><div class="works-head">What it works${ex.regions ? '' : ' <small>— a guess for custom lifts; match it to the library for exact targets</small>'}</div>
+    ${regs.map(([r, w]) => `<div class="works-row ${w >= DIRECT ? 'main' : ''}"><span>${esc(REGIONS[r].name)}${REGIONS[r].name === MUSCLES[REGIONS[r].muscle] ? '' : `<small>${MUSCLES[REGIONS[r].muscle]}</small>`}</span>
+      <div class="works-bar"><i style="width:${Math.round(w * 100)}%"></i></div><em>${label(w)}</em></div>`).join('')}</div>`;
+}
+
 // ---------- Matching custom exercises ----------
 const libraryOnly = () => allExercises().filter(e => !e.custom);
 
@@ -1809,6 +1818,7 @@ function pickRowHtml(ex, act, opts = {}) {
   const starred = stars().includes(ex.id);
   return `<div class="pick-row"><button class="pick ${opts.added ? 'added' : ''}" data-act="${act}" data-id="${ex.id}">
     <span>${esc(ex.name)}${opts.tag || ''}</span><span class="muted pick-eq">${opts.added ? 'added' : `${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}`}</span></button>
+    <button class="info" data-act="exInfo" data-id="${ex.id}" aria-label="What it works">ⓘ</button>
     <button class="star ${starred ? 'on' : ''}" data-act="star" data-id="${ex.id}" aria-label="${starred ? 'Unstar' : 'Star'}: at my gym">${starred ? '★' : '☆'}</button></div>`;
 }
 
@@ -2090,7 +2100,8 @@ function sheetHtml() {
       const inc = increment(ex);
       const steps = stepChoices(U());
       return `<h2>${esc(ex.name)}</h2>
-        <label class="field"><span>Note — shows every time you do this lift</span>
+        ${worksHtml(ex)}
+        <label class="field" style="margin-top:14px"><span>Note — shows every time you do this lift</span>
           <textarea id="exNote" rows="2" placeholder="e.g. Seat height 4, wide grip">${esc(exSetting(e.exId, 'note') || '')}</textarea></label>
         <button class="btn" data-act="saveNote">Save note</button>
         <div class="field" style="margin-top:16px"><span>Weight step for this lift (your gym's real jumps)</span>
@@ -2201,6 +2212,14 @@ function sheetHtml() {
           <button class="btn" data-act="moveBack">Pick a different exercise</button></div>
         <p class="muted small">You can undo right after.</p>`;
     }
+    case 'exInfo': {
+      const ex = exercise(s.exId);
+      return `<h2>${esc(ex.name)}</h2>
+        <p class="muted small" style="margin-top:-6px">${EQUIP_ICON[ex.equipment] || ''} ${esc(EQUIPMENT[ex.equipment]?.name || '')} · ${MUSCLES[ex.muscle]} · ${ex.compound ? 'compound' : 'isolation'}${ex.unilateral ? ' · one side at a time' : ''}</p>
+        ${worksHtml(ex)}
+        <div class="stack" style="margin-top:14px">${state.activeWorkout ? `<button class="btn primary" data-act="pick" data-id="${ex.id}">Add to workout</button>` : ''}
+          <button class="btn" data-act="pickerBack">Back</button></div>`;
+    }
     case 'matchConfirm': {
       const c = exercise(s.fromId);
       const to = exercise(s.toId);
@@ -2210,6 +2229,7 @@ function sheetHtml() {
       if (p.inPlan) parts.push('your weekly plan');
       return `<h2>Match to ${esc(to.name)}?</h2>
         <div class="match-box"><div><small>Your custom exercise</small><b>${esc(c.name)}</b></div><span>→</span><div><small>Library</small><b>${esc(to.name)}</b></div></div>
+        ${worksHtml(to)}
         <p class="muted small">Moves ${parts.join(', ')} to ${esc(to.name)}, then removes "${esc(c.name)}". You can undo right after.</p>
         <div class="stack"><button class="btn primary" data-act="matchDo">Match and move history</button>
           <button class="btn" data-act="matchBack">Pick a different one</button></div>`;
@@ -2785,6 +2805,9 @@ const actions = {
   },
 
   // Matching custom exercises to the library
+  exInfo(el) { openSheet({ type: 'exInfo', exId: el.dataset.id }); },
+  // Back to the exercise list, keeping the search and filters.
+  pickerBack() { if (state.activeWorkout) openSheet({ type: 'picker' }); else closeSheet(); },
   matchSheet(el) { ui.matchQ = ''; openSheet({ type: 'match', fromId: el.dataset.id }); },
   moveSheet(el) { ui.matchQ = ''; openSheet({ type: 'match', move: true, fromId: el.dataset.id || ui.sheet?.exId }); },
   movePick(el) {
