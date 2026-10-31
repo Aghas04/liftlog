@@ -1,6 +1,6 @@
 // Offline support: serve the app shell from cache, refresh it in the background.
 // Bump VERSION when shipping changes so phones pick up the new files.
-const VERSION = 'liftlog-v19';
+const VERSION = 'liftlog-v20';
 const FILES = [
   './',
   'index.html',
@@ -22,6 +22,9 @@ const FILES = [
   'js/units.js',
   'js/planner.js',
   'js/plancontrol.js',
+  'js/library.js',
+  'js/search.js',
+  'js/merge.js',
   'icons/icon-180.png',
   'icons/icon-192.png',
   'icons/icon-512.png',

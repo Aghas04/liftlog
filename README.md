@@ -24,7 +24,10 @@ npm test
 - `js/planner.js` – weekly plans: splits, blocks, weekly volume, reviews (pure, unit-tested)
 - `js/plancontrol.js` – plan lifecycle: pauses, breaks, edits that teach the plan (pure, unit-tested)
 - `js/units.js` – lb/kg display; weights are always stored in lb
-- `js/data.js` – day types and the exercise library
+- `js/library.js` – every exercise as movement × equipment version (plate-loaded, pin/dial, Smith, cable…)
+- `js/search.js` – exercise search with filters and synonyms
+- `js/merge.js` – matching a custom exercise to the library (moves its history)
+- `js/data.js` – muscles, regions, day types; builds the exercise list from the library
 - `js/store.js` – data saved in `localStorage`
 - `js/app.js` – UI
 - `sw.js` – offline cache

@@ -254,12 +254,15 @@ export function buildBlock(input) {
             const main = primaryRegion(ex);
             const regs = exerciseRegions(ex);
             let s = 0;
-            for (const r of allowedRegions) s += (regs[r] || 0) * (neglect.has(r) ? 2 : 1);
+            // A custom lift without an area map counts as one area, not all of them.
+            if (ex.regions) for (const r of allowedRegions) s += (regs[r] || 0) * (neglect.has(r) ? 2 : 1);
+            else s += 1;
             if (usage[ex.id]) s += 2 + Math.min(usage[ex.id], 10) * 0.15;
             if (main === emphasis) s += 2.5;
             if (j === 0 && ex.compound && MAJOR.includes(m)) s += 3;
             if (used.has(main)) s -= 6;
             if (ex.hard && profile.level !== 'advanced') s -= 5;              // e.g. Nordic curls: advanced only
+            if (!ex.regions) s -= 3;                                          // custom lift: its coverage is a guess
             if (j === 0 && (firstPicks[m] || []).includes(ex.id)) s -= 2.5; // A/B/C variants differ
             if (j > 0 && prevList.slice(1).includes(ex.id)) s -= 1.5;        // accessories rotate between blocks
             s += jitter() * 0.6;

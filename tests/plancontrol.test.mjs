@@ -598,3 +598,58 @@ test('weekly sets card only counts this calendar week', async () => {
   const v = weekVolume(currentWeek(plan, [lastSunday, nextMonday], lookup, MONDAY), [lastSunday, nextMonday], lookup);
   assert.equal(v.quads.done, 0);
 });
+
+test('plans pick common versions unless you use or star a machine', async () => {
+  const { planPool } = await import('../js/plancontrol.js');
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  const mk = (pool, now = MONDAY - 7 * DAY) => createPlan({ profile: p6, splitId: 'upper_lower', exercises: pool.exercises, usage: pool.usage, workouts: [], lookup, now });
+  const plain = mk(planPool(EXERCISES));
+  for (const id of allSlotIds(plain)) assert.ok(lookup(id).common, `${lookup(id).name} isn't a common version`);
+  const plate = EXERCISES.find(e => e.name === 'Plate-Loaded Incline Press');
+  assert.ok(!allSlotIds(plain).includes(plate.id));
+  // Starred: it shows up in the plan.
+  const starred = mk(planPool(EXERCISES, { stars: [plate.id] }));
+  assert.ok(allSlotIds(starred).includes(plate.id), 'starred machine is planned');
+  // Used a lot: it shows up too.
+  const used = mk(planPool(EXERCISES, { usage: { [plate.id]: 8 } }));
+  assert.ok(allSlotIds(used).includes(plate.id), 'machine you use is planned');
+  // Every week of a 6-split plan with the pool stays valid.
+  const week = currentWeek(starred, [], lookup, MONDAY);
+  for (const d of week.days.filter(x => x.kind === 'train')) assert.ok(d.session.items.length >= 5);
+});
+
+test('start fresh ignores past workouts for the plan, not for weights', () => {
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  const ws = [offPlan('b', MONDAY + 3 * DAY, upperDay), offPlan('c', MONDAY + 4 * DAY, upperDay)];
+  const fri = MONDAY + 4 * DAY + 12 * 3600000;
+  const usage = { db_bench: 9 };
+  const normal = createPlan({ profile: p6, splitId: 'upper_lower', exercises: EXERCISES, usage, workouts: ws, lookup, now: fri });
+  const fresh = createPlan({ profile: p6, splitId: 'upper_lower', exercises: EXERCISES, usage, workouts: ws, lookup, now: fri, fresh: true });
+  assert.equal(fresh.fresh, true);
+  assert.equal(normal.rotationOffset, 1, 'normal plan reacts to two upper days');
+  assert.equal(fresh.rotationOffset, 0, 'fresh plan starts at the first day');
+  // Earlier workouts don't show as done in the fresh plan's week.
+  const wk = currentWeek(fresh, ws, lookup, fri);
+  assert.ok(!wk.days.some(d => d.kind === 'done'));
+  // A long gap before a fresh plan isn't treated as a break to ease back from.
+  const old = [offPlan('o', MONDAY - 60 * DAY, upperDay)];
+  const f2 = createPlan({ profile: p6, splitId: 'upper_lower', exercises: EXERCISES, workouts: old, lookup, now: MONDAY, fresh: true });
+  assert.ok(!maintainPlan(f2, old, MONDAY + DAY, lookup).events.includes('eased'));
+  // Once it runs, its own workouts count normally.
+  const day = todayOf(currentWeek(fresh, ws, lookup, MONDAY + 5 * DAY), MONDAY + 5 * DAY);
+  const w = doSession(fresh, day, MONDAY + 5 * DAY);
+  assert.equal(currentWeek(fresh, [...ws, w], lookup, MONDAY + 5 * DAY + 3600000).days[5].kind, 'done');
+});
+
+test('custom lifts without a muscle-area map do not crowd out real lifts', async () => {
+  const { planPool } = await import('../js/plancontrol.js');
+  const custom = { id: 'c_x', name: 'pin row machine', muscle: 'back', equipment: 'machine', compound: true, custom: true };
+  const all = [...EXERCISES, custom];
+  const look = id => all.find(e => e.id === id);
+  // Never done: not in the pool at all.
+  assert.ok(!planPool(all).exercises.includes(custom));
+  // Done once: allowed, but real lifts still lead each back slot.
+  const p = planPool(all, { usage: { c_x: 1 } });
+  const plan = createPlan({ profile: { ...profile, days: [0, 1, 2, 3, 4, 5] }, splitId: 'upper_lower', exercises: p.exercises, usage: p.usage, workouts: [], lookup: look, now: MONDAY - 7 * DAY });
+  for (const v of plan.slots.upper) assert.notEqual(v.back[0], 'c_x', 'a guessed custom lift is not a core lift');
+});

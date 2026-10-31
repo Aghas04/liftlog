@@ -1,7 +1,7 @@
 // Training insights derived from workout history. Pure functions.
 //   lookup(exId) -> exercise { muscle, equipment, ... }
 //   bwOn(iso)    -> bodyweight in lb on that date, or null
-import { workingSets, sessionE1RM, sessionMissed } from './engine.js';
+import { workingSets, sessionE1RM, sessionMissed, loadFor } from './engine.js';
 import { REGIONS, MUSCLES, regionsOf, exerciseRegions } from './data.js';
 
 const DAY = 86400000;
@@ -13,7 +13,7 @@ export function weekKey(t) {
   return d.getTime();
 }
 
-const loadOf = (ex, weight, bw) => (ex.equipment === 'bodyweight' ? (bw || 0) + (weight || 0) : weight || 0);
+const loadOf = loadFor;
 
 /** Working sets per muscle in workouts on or after sinceIso. */
 export function muscleSets(workouts, lookup, sinceIso) {

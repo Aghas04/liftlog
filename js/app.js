@@ -1,4 +1,6 @@
-import { MUSCLES, EQUIPMENT, REGIONS, CUSTOM_SPLIT, EQUIPMENT_PROFILES, regionsOf, exerciseRegions, primaryRegion } from './data.js';
+import { MUSCLES, EQUIPMENT, REGIONS, CUSTOM_SPLIT, EQUIPMENT_PROFILES, ANGLES, regionsOf, exerciseRegions, primaryRegion } from './data.js';
+import { searchExercises, matchSuggestions } from './search.js';
+import { mergeExercise, mergePreview } from './merge.js';
 import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion } from './builder.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
@@ -6,13 +8,13 @@ import {
 } from './store.js';
 import {
   suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
-  personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom,
+  personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor,
 } from './engine.js';
 import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter } from './planner.js';
 import {
   createPlan, blockedLifts, maintainPlan, currentWeek, upcomingDays, weekVolume, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
   unexclude, dropFromBlock, sessionEntries, runReview, approveReview, postponeReview, reviewDue, isPaused, blockWeek,
-  replacementFor, swapOptions, STRENGTH_ZONE,
+  replacementFor, swapOptions, STRENGTH_ZONE, planPool,
 } from './plancontrol.js';
 import {
   recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets,
@@ -82,6 +84,12 @@ const EQUIP_ICON = {
   cable: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="5" r="2.5"/><path d="M12 7.5V17M8 19h8M12 17v2"/></svg>',
   machine: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M6 9h12M6 13h12M6 17h12"/></svg>',
   bodyweight: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4.5" r="2"/><path d="M5 9l7 1 7-1M12 10v5l-3 6M12 15l3 6"/></svg>',
+  plate_loaded: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/></svg>',
+  smith: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 3v18M19 3v18M3 10h18"/></svg>',
+  ez_bar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l2-2 2 4 2-4 2 4 2-2h6M4 9v6M20 9v6"/></svg>',
+  trap_bar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M8 6h8l4 6-4 6H8l-4-6z"/></svg>',
+  kettlebell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M8.5 8a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="14.5" r="6"/></svg>',
+  assisted: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V5M7 10l5-5 5 5M6 20h12"/></svg>',
 };
 
 // ---------- Helpers ----------
@@ -95,6 +103,10 @@ function startOfDay(t) { const d = new Date(t); d.setHours(0, 0, 0, 0); return d
 const fmtDate = iso => new Date(iso).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const isBW = ex => ex.equipment === 'bodyweight';
+// Assisted machines store assistance as a negative weight; the user sees and types it as a positive number.
+const isAssist = ex => ex.equipment === 'assisted';
+const shownW = (ex, w) => (isAssist(ex) && w != null && w !== '' ? -w : w);
+const stars = () => state.settings.gymStars || [];
 
 function toast(msg) {
   const el = document.createElement('div');
@@ -192,7 +204,7 @@ function refreshPlan() {
 }
 
 function loadOf(ex, weight, dateIso) {
-  return isBW(ex) ? (bodyweightOn(dateIso) || 0) + (weight || 0) : weight || 0;
+  return loadFor(ex, weight, bodyweightOn(dateIso));
 }
 
 function sessionVolume(ex, sets, dateIso) {
@@ -204,6 +216,7 @@ function workoutVolume(w) {
 }
 
 function weightLabel(ex, w) {
+  if (isAssist(ex)) return w ? `${fmtW(-w)} ${wu()} assist` : 'No assist';
   if (isBW(ex)) return w ? `BW + ${fmtW(w)} ${wu()}` : 'Bodyweight';
   return `${fmtW(w)} ${wu()}`;
 }
@@ -213,7 +226,7 @@ function setsSummary(ex, sets) {
   if (!ws.length) return '';
   const sameW = ws.every(s => s.weight === ws[0].weight);
   if (sameW) return `${weightLabel(ex, ws[0].weight)} × ${ws.map(s => s.reps).join(', ')}`;
-  return ws.map(s => `${fmtW(s.weight) || 'BW'}×${s.reps}`).join(', ');
+  return ws.map(s => `${isAssist(ex) ? `−${fmtW(-s.weight)}` : fmtW(s.weight) || 'BW'}×${s.reps}`).join(', ');
 }
 
 const FEEL = { easy: 'Easy', hard: 'Hard', too_hard: 'Too hard' };
@@ -247,7 +260,7 @@ function startWorkout(dayId, from, template, name, extra = {}, readiness = null)
   if (template) {
     const timesUsed = state.workouts.filter(x => x.templateId === template.id).length;
     const offers = swapSuggestions({
-      entries: w.exercises, neglect: neglectList(), exercises: allExercises(), usage: usageCounts(), blocked: blocked(),
+      entries: w.exercises, neglect: neglectList(), exercises: pool().exercises, usage: pool().usage, blocked: blocked(),
       equipment: state.plan?.profile.equipment || 'gym', lookup: exercise, timesUsed,
     });
     if (offers.length) w.swapOffers = offers;
@@ -563,7 +576,7 @@ function setRow(ctx, ei, si, e, ex, s, live) {
     <button class="set-num ${s.warmup ? 'warm' : ''}" data-act="warmup" aria-label="Toggle warm-up">${s.warmup ? 'W' : si + 1 - e.sets.slice(0, si).filter(x => x.warmup).length}</button>
     <div class="stepper">
       <button data-act="step" data-f="weight" data-d="-1" aria-label="Less weight">−</button>
-      <input data-field="weight" inputmode="decimal" value="${fmtW(s.weight)}" placeholder="${bw ? '+0' : wu()}" aria-label="Weight">
+      <input data-field="weight" inputmode="decimal" value="${fmtW(shownW(ex, s.weight))}" placeholder="${isAssist(ex) ? 'assist' : bw ? '+0' : wu()}" aria-label="${isAssist(ex) ? 'Assistance' : 'Weight'}">
       <button data-act="step" data-f="weight" data-d="1" aria-label="More weight">+</button>
     </div>
     <div class="stepper reps">
@@ -627,7 +640,7 @@ function exCard(w, ctx, ei, live) {
     <div class="ex-head">
       <div><span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[ex.muscle] || ''}</span><h3>${esc(ex.name)}</h3></div>
       <div class="ex-tools">
-        ${live && ex.equipment === 'barbell' ? `<button data-act="platesSheet" aria-label="Plate calculator">Plates</button>` : ''}
+        ${live && ['barbell', 'smith', 'plate_loaded'].includes(ex.equipment) ? `<button data-act="platesSheet" aria-label="Plate calculator">Plates</button>` : ''}
         ${live ? `<button data-act="restSheet">⏱ ${restFor(e.exId)}s</button>` : ''}
         ${live
           ? `<button data-act="exMenu" aria-label="Exercise options">•••</button>`
@@ -636,7 +649,7 @@ function exCard(w, ctx, ei, live) {
     </div>
     ${note ? `<div class="ex-note">📝 ${esc(note)}</div>` : ''}
     ${e.zone ? `<div class="zone-tag">Strength · ${e.zone[0]}–${e.zone[1]} reps</div>` : ''}${sugHtml}${lastHtml}
-    <div class="set-head"><span>Set</span><span>${isBW(ex) ? '+ ' + wu() : wu()}</span><span>Reps</span><span></span></div>
+    <div class="set-head"><span>Set</span><span>${isAssist(ex) ? 'Assist ' + wu() : isBW(ex) ? '+ ' + wu() : wu()}</span><span>Reps</span><span></span></div>
     ${e.sets.map((s, si) => setRow(ctx, ei, si, e, ex, s, live)).join('')}
     <div class="set-actions">
       <button class="minus" data-act="removeSet">− Set</button>
@@ -816,7 +829,8 @@ function workoutTipHtml(w, dt) {
   for (const e of w.exercises) for (const [r, wt] of Object.entries(exerciseRegions(exercise(e.exId)))) if (wt >= DIRECT) covered.add(r);
   const n = neglectList().find(x => !covered.has(x.region) && dt.muscles.includes(x.muscle));
   if (!n) return '';
-  const ex = exerciseForRegion(n.region, usable(), usageCounts());
+  const p = pool();
+  const ex = exerciseForRegion(n.region, p.exercises, p.usage);
   if (!ex) return '';
   return `<div class="tip">
     <div>💡 <b>${esc(n.name)}</b>: ${esc(n.reason.charAt(0).toLowerCase() + n.reason.slice(1))}. Add ${esc(ex.name)}?</div>
@@ -1318,7 +1332,9 @@ const GOAL_INFO = {
 const blocked = () => blockedLifts(state.settings, state.plan);
 const usable = () => { const b = new Set(blocked()); return allExercises().filter(e => !b.has(e.id)); };
 const pace = () => paceFromHistory(state.workouts, state.settings.defaultRest);
-const planCtx = () => ({ exercises: allExercises(), lookup: exercise, blocked: blocked(), usage: usageCounts() });
+// What plans and suggestions may pick: common versions plus anything you've used or starred.
+const pool = () => planPool(usable(), { usage: usageCounts(), stars: stars() });
+const planCtx = () => { const p = pool(); return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage }; };
 const todayIdx = () => (new Date().getDay() + 6) % 7;
 
 // Ended pauses, long breaks, spent edits. Saves only when something changed.
@@ -1537,6 +1553,7 @@ function setupDraft() {
     avoid: p ? [...(p.avoid || [])] : [],
     activities: p ? (p.activities || []).map(a => ({ ...a })) : [],
     splitId: state.plan?.splitId || null,
+    fresh: false,
   };
 }
 const setupProfile = d => ({
@@ -1586,7 +1603,8 @@ function setupHtml() {
           <b>${esc(sp.name)}${i === 0 && r.fits ? ' <em class="rec">Recommended</em>' : ''}</b>
           <small>${esc(sp.blurb)}</small>
           <ul>${r.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul></button>`;
-      }).join('')}</div>`;
+      }).join('')}</div>
+      ${state.workouts.length ? `<label class="fresh-toggle"><input type="checkbox" id="suFresh" ${d.fresh ? 'checked' : ''}><span><b>Start fresh</b><small>Plan as if you're starting new: ignore past workouts for the first day, weak areas and favorite lifts. Weight suggestions still use your history.</small></span></label>` : ''}`;
   }
   const last = d.step === steps.length - 1;
   return `<h2>${state.plan ? 'Plan settings' : 'Set up your plan'}</h2>${dots}${body}
@@ -1715,6 +1733,30 @@ function calibrate(c) {
   return true;
 }
 
+// ---------- Matching custom exercises ----------
+const libraryOnly = () => allExercises().filter(e => !e.custom);
+
+// Library suggestions while naming a custom exercise: it may already exist.
+function customMatchesHtml(name, muscle) {
+  if (!name || name.trim().length < 3) return '';
+  const list = matchSuggestions({ id: 'new', name, muscle, equipment: '' }, libraryOnly(), 3).filter(x => x.score >= 0.6);
+  if (!list.length) return '';
+  return `<div class="lib-hint"><small>Already in the library? Tap to use it instead:</small>
+    ${list.map(({ ex }) => `<button class="pick" data-act="pick" data-id="${ex.id}"><span>${esc(ex.name)}</span><span class="muted pick-eq">${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}</span></button>`).join('')}</div>`;
+}
+
+// Results in the match sheet: best guesses, or search results while typing.
+function matchListHtml() {
+  const custom = exercise(ui.sheet.fromId);
+  const q = (ui.matchQ || '').trim();
+  const rows = q
+    ? searchExercises(libraryOnly(), q, {}, { usage: usageCounts(), stars: stars() }).slice(0, 40)
+    : matchSuggestions(custom, libraryOnly(), 6).map(x => x.ex);
+  const head = q ? '' : `<div class="section-title">Best matches</div>`;
+  return head + (rows.map(ex => `<button class="pick" data-act="matchPick" data-id="${ex.id}"><span>${esc(ex.name)}</span><span class="muted pick-eq">${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}</span></button>`).join('')
+    || '<div class="empty">No match. Try other words, like "incline plate" or "pin row".</div>');
+}
+
 // ---------- Sheets ----------
 function openSheet(s) { ui.sheet = s; renderSheet(); }
 
@@ -1728,31 +1770,54 @@ function reopenSheet(back) {
 }
 function closeSheet() { ui.sheet = null; renderSheet(); }
 
+// Filter chips above the picker list. Angle chips only appear where they apply.
+function pickFiltersHtml() {
+  const f = ui.pick;
+  const chip = (k, v, l) => `<button data-act="pickF" data-k="${k}" data-v="${v}" class="${f[k] === v ? 'on' : ''}">${l}</button>`;
+  const angled = ['chest', 'biceps', 'triceps', 'shoulders', 'abs'].includes(f.muscle) || /press|bench|fly|curl/i.test(ui.pickQuery || '');
+  return `<div class="chip-row">${Object.entries(MUSCLES).map(([k, n]) => chip('muscle', k, n)).join('')}</div>
+    <div class="chip-row">${Object.entries(EQUIPMENT).map(([k, e]) => chip('equipment', k, `${EQUIP_ICON[k] || ''}${e.name}`)).join('')}</div>
+    ${angled ? `<div class="chip-row">${Object.entries(ANGLES).map(([k, n]) => chip('angle', k, n)).join('')}</div>` : ''}`;
+}
+
+// One exercise row: tap to pick, star for "at my gym".
+function pickRowHtml(ex, act, opts = {}) {
+  const starred = stars().includes(ex.id);
+  return `<div class="pick-row"><button class="pick ${opts.added ? 'added' : ''}" data-act="${act}" data-id="${ex.id}">
+    <span>${esc(ex.name)}${opts.tag || ''}</span><span class="muted pick-eq">${opts.added ? 'added' : `${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}`}</span></button>
+    <button class="star ${starred ? 'on' : ''}" data-act="star" data-id="${ex.id}" aria-label="${starred ? 'Unstar' : 'Star'}: at my gym">${starred ? '★' : '☆'}</button></div>`;
+}
+
 function pickerList(query) {
   const w = state.activeWorkout;
   const dt = dayType(w.dayType);
   const added = new Set(w.exercises.map(e => e.exId));
   const counts = usageCounts();
+  const f = ui.pick;
   const q = query.trim().toLowerCase();
   const sortFn = (a, b) => (counts[b.id] || 0) - (counts[a.id] || 0) || a.name.localeCompare(b.name);
   const neglected = neglectList().slice(0, 5).map(n => n.region);
   const hits = ex => neglected.find(r => (exerciseRegions(ex)[r] || 0) >= DIRECT);
   const item = ex => {
     const r = hits(ex);
-    return `<button class="pick ${added.has(ex.id) ? 'added' : ''}" data-act="pick" data-id="${ex.id}">
-    <span>${esc(ex.name)}${r ? `<em class="hit-tag">Hits ${esc(REGIONS[r].name.toLowerCase())}</em>` : ''}</span><span class="muted pick-eq">${added.has(ex.id) ? 'added' : `${EQUIP_ICON[ex.equipment] || ''}${esc(EQUIPMENT[ex.equipment]?.name || '')}`}</span></button>`;
+    return pickRowHtml(ex, 'pick', { added: added.has(ex.id), tag: r ? `<em class="hit-tag">Hits ${esc(REGIONS[r].name.toLowerCase())}</em>` : '' });
   };
-  if (q) {
-    const hits = allExercises().filter(e => e.name.toLowerCase().includes(q)).sort(sortFn);
-    return (hits.map(item).join('') || `<div class="empty">No match. Create it as a custom exercise.</div>`);
+  if (q || f.muscle || f.equipment || f.angle) {
+    const res = searchExercises(allExercises(), q, f, { usage: counts, stars: stars() });
+    if (!res.length) return `<div class="empty">No match. Try fewer words or filters, or create it as a custom exercise.</div>`;
+    return res.slice(0, 80).map(item).join('') + (res.length > 80 ? `<p class="muted small">Showing 80 of ${res.length}. Add a filter to narrow it down.</p>` : '');
   }
+  // No search: the usual versions per muscle (plus anything you've used or starred).
+  const starred = new Set(stars());
+  const usual = e => e.common || e.custom || counts[e.id] || starred.has(e.id);
+  const starFirst = (a, b) => starred.has(b.id) - starred.has(a.id) || sortFn(a, b);
   const weekSets = muscleSets(state.workouts, exercise, new Date(Date.now() - 7 * DAY).toISOString());
   const target = state.settings.weeklyTarget;
   return dt.muscles.map(m => {
-    const list = allExercises().filter(e => e.muscle === m).sort(sortFn);
+    const list = allExercises().filter(e => e.muscle === m && usual(e)).sort(starFirst);
     const n = weekSets[m] || 0;
     return list.length ? `<div class="pick-group"><h4>${MUSCLES[m]}<span class="${n >= target ? 'ok' : ''}">${n}/${target} sets this week</span></h4>${list.map(item).join('')}</div>` : '';
-  }).join('');
+  }).join('') + `<p class="muted small">Showing the usual versions. Search or filter to see all ${allExercises().length} exercises, including every machine type.</p>`;
 }
 
 // Builder settings live here so they survive closing and reopening the sheet.
@@ -1767,9 +1832,9 @@ function runBuild() {
   const b = ui.build;
   const budget = buildBudget();
   const plan = buildWorkout({
-    workouts: state.workouts, lookup: exercise, exercises: allExercises(), budget, mode: b.mode, muscles: b.muscles,
+    workouts: state.workouts, lookup: exercise, exercises: pool().exercises, budget, mode: b.mode, muscles: b.muscles,
     weeklyTarget: state.settings.weeklyTarget, ignored: state.settings.ignoredRegions, snoozed: state.settings.neglectSnooze,
-    seed: b.seed, usage: usageCounts(), exclude: blocked(),
+    seed: b.seed, usage: pool().usage, exclude: blocked(),
   });
   if (plan.error) { b.error = plan; b.plan = null; openSheet({ type: 'build' }); return; }
   b.error = null;
@@ -1950,13 +2015,15 @@ function sheetHtml() {
     }
     case 'picker':
       return `<h2>Add exercise</h2>
-        <input class="search" id="pickerSearch" placeholder="Search all exercises" autocomplete="off">
-        <div id="pickerList">${pickerList('')}</div>
+        <input class="search" id="pickerSearch" placeholder="Search, e.g. incline plate, pin row, smith squat" autocomplete="off" value="${esc(ui.pickQuery || '')}">
+        <div id="pickFilters">${pickFiltersHtml()}</div>
+        <div id="pickerList">${pickerList(ui.pickQuery || '')}</div>
         <button class="btn ghost" style="margin-top:14px" data-act="customSheet">+ Custom exercise</button>`;
     case 'custom': {
       const m0 = dayType(state.activeWorkout?.dayType)?.muscles[0] || 'chest';
       return `<h2>Custom exercise</h2>
-        <label class="field"><span>Name</span><input id="cName" placeholder="e.g. Machine Pullover"></label>
+        <label class="field"><span>Name</span><input id="cName" placeholder="e.g. Machine Pullover" autocomplete="off"></label>
+        <div id="cMatches"></div>
         <label class="field"><span>Muscle</span><select id="cMuscle">${Object.entries(MUSCLES).map(([k, v]) => `<option value="${k}" ${m0 === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label class="field"><span>Main area it works</span><select id="cRegion">${regionOptions(m0)}</select></label>
         <label class="field"><span>Equipment</span><select id="cEquip">${Object.entries(EQUIPMENT).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('')}</select></label>
@@ -2009,6 +2076,8 @@ function sheetHtml() {
           <button data-act="addWarmups"><span>🔥</span>Add warm-up sets</button>
           <button data-act="swapSheet"><span>🔄</span>Swap exercise</button>
           <button data-act="hurtSheet"><span>🤕</span>This hurt</button>
+          <button data-act="star" data-id="${e.exId}"><span>${stars().includes(e.exId) ? '★' : '☆'}</span>${stars().includes(e.exId) ? 'Starred: at my gym' : 'Star: at my gym'}</button>
+          ${ex.custom ? `<button data-act="matchSheet" data-id="${ex.id}"><span>🔗</span>Match to a library exercise</button>` : ''}
           <button data-act="supersetSheet"><span>🔗</span>${e.group ? 'Add another to this superset' : 'Superset with…'}</button>
           ${e.group ? `<button data-act="unSuperset"><span>✂️</span>Remove from superset</button>` : ''}
           <button class="danger" data-act="removeExMenu"><span>🗑</span>Remove exercise</button>
@@ -2018,8 +2087,9 @@ function sheetHtml() {
       const e = state.activeWorkout.exercises[s.ei];
       const ex = exercise(e.exId);
       const counts = usageCounts();
-      const options = usable().filter(x => x.muscle === ex.muscle && x.id !== ex.id)
-        .sort((a, b) => (counts[b.id] || 0) - (counts[a.id] || 0) || a.name.localeCompare(b.name));
+      const blockedSet = new Set(blocked());
+      const options = searchExercises(allExercises(), '', { muscle: ex.muscle }, { usage: counts, stars: stars() })
+        .filter(x => x.id !== ex.id && !blockedSet.has(x.id));
       return `<h2>Swap ${esc(ex.name)}</h2>
         <p class="muted small">Other ${MUSCLES[ex.muscle]} lifts. ${e.sets.some(x => x.done) ? 'Your logged sets stay — the new lift is added below.' : 'Lifts you haven’t done get a rough starting weight.'}</p>
         ${options.map(x => `<button class="pick" data-act="doSwap" data-id="${x.id}"><span>${esc(x.name)}</span><span class="muted pick-eq">${EQUIP_ICON[x.equipment] || ''}${esc(EQUIPMENT[x.equipment]?.name || '')}</span></button>`).join('')}`;
@@ -2071,8 +2141,28 @@ function sheetHtml() {
         <div class="plates-view">${platesSvg(plates, pu)}</div>
         <p class="plates-list">${under ? `Less than the ${s.bar} ${pu} bar.` : plates.length ? `Each side: <b>${plates.join(' + ')}</b>` : 'Empty bar'}${leftover ? ` <span class="muted">(${leftover} ${pu} can't be loaded)</span>` : ''}</p>
         <div class="field"><span>Bar</span>
-          <div class="chips">${PLATE_SETS[pu].bars.map(([v, l]) => `<button data-act="platesBar" data-v="${v}" class="${s.bar === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+          <div class="chips">${[...PLATE_SETS[pu].bars, [0, 'No bar (machine)']].map(([v, l]) => `<button data-act="platesBar" data-v="${v}" class="${s.bar === v ? 'on' : ''}">${l}</button>`).join('')}</div>
         </div>`;
+    }
+    case 'match': {
+      const c = exercise(s.fromId);
+      return `<h2>🔗 Match "${esc(c.name)}"</h2>
+        <p class="muted small">Pick the library exercise it really is. Its sets, note, weight step and template spots move over, so suggestions and progress carry on.</p>
+        <input class="search" id="matchSearch" placeholder="Search, e.g. incline plate press" autocomplete="off" value="${esc(ui.matchQ || '')}">
+        <div id="matchList">${matchListHtml()}</div>`;
+    }
+    case 'matchConfirm': {
+      const c = exercise(s.fromId);
+      const to = exercise(s.toId);
+      const p = mergePreview(state, s.fromId);
+      const parts = [`${p.workouts} workout${p.workouts === 1 ? '' : 's'} (${p.sets} sets)`];
+      if (p.templates) parts.push(`${p.templates} template${p.templates === 1 ? '' : 's'}`);
+      if (p.inPlan) parts.push('your weekly plan');
+      return `<h2>Match to ${esc(to.name)}?</h2>
+        <div class="match-box"><div><small>Your custom exercise</small><b>${esc(c.name)}</b></div><span>→</span><div><small>Library</small><b>${esc(to.name)}</b></div></div>
+        <p class="muted small">Moves ${parts.join(', ')} to ${esc(to.name)}, then removes "${esc(c.name)}". You can undo right after.</p>
+        <div class="stack"><button class="btn primary" data-act="matchDo">Match and move history</button>
+          <button class="btn" data-act="matchBack">Pick a different one</button></div>`;
     }
     case 'safety':
       return safetyHtml();
@@ -2113,7 +2203,7 @@ function sheetHtml() {
       const it = day?.session.items[s.i];
       if (!it) return `<h2>Swap</h2><div class="empty">Nothing to swap.</div>`;
       const ex = exercise(it.exId);
-      const opts = swapOptions(it.exId, { plan: state.plan, ...planCtx(), type: day.session.type, exclude: day.session.items.map(x => x.exId) });
+      const opts = swapOptions(it.exId, { plan: state.plan, ...planCtx(), exercises: allExercises(), usage: pool().usage, type: day.session.type, exclude: day.session.items.map(x => x.exId) });
       return `<h2>Swap ${esc(ex.name)}</h2>
         <p class="muted small">${s.scope === 'block' ? 'For the rest of this block.' : 'For this session only.'} Same muscle, your equipment. Best match for the same area first.</p>
         ${opts.map(x => `<button class="pick" data-act="planDoSwap" data-id="${x.id}"><span>${esc(x.name)}</span><span class="muted pick-eq">${EQUIP_ICON[x.equipment] || ''}${esc(REGIONS[primaryRegion(x)]?.name || '')}</span></button>`).join('') || '<div class="empty">No other options with your equipment.</div>'}`;
@@ -2164,6 +2254,12 @@ function sheetHtml() {
         </div>
         ${Object.keys(state.settings.painFlags || {}).length ? `<div class="field"><span>Lifts that hurt — kept out of plans. Tap to allow again</span>
           <div class="chips">${Object.keys(state.settings.painFlags).map(id => `<button data-act="unpain" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div>
+        </div>` : ''}
+        ${stars().length ? `<div class="field"><span>At my gym (starred) — tap to unstar</span>
+          <div class="chips">${stars().map(id => `<button data-act="star" data-id="${id}">★ ${esc(exercise(id).name)}</button>`).join('')}</div>
+        </div>` : ''}
+        ${state.customExercises.length ? `<div class="field"><span>Your custom exercises — match one to the library so its history moves over</span>
+          <div class="custom-list">${state.customExercises.map(c => `<div class="custom-row"><b>${esc(c.name)}</b><small>${MUSCLES[c.muscle] || ''}</small><button data-act="matchSheet" data-id="${c.id}">Match</button></div>`).join('')}</div>
         </div>` : ''}
         ${state.plan?.excluded?.length ? `<div class="field"><span>Lifts the plan learned to skip. Tap to allow again</span>
           <div class="chips">${state.plan.excluded.map(id => `<button data-act="unexclude" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div>
@@ -2416,7 +2512,23 @@ const actions = {
     refreshPlan();
     render();
   },
-  picker() { openSheet({ type: 'picker' }); },
+  picker() { ui.pick = { muscle: '', equipment: '', angle: '' }; ui.pickQuery = ''; openSheet({ type: 'picker' }); },
+  pickF(el) {
+    const { k, v } = el.dataset;
+    ui.pick[k] = ui.pick[k] === v ? '' : v;
+    if (k === 'muscle' && !['chest', 'biceps', 'triceps', 'shoulders', 'abs'].includes(ui.pick.muscle)) ui.pick.angle = '';
+    $('#pickFilters').innerHTML = pickFiltersHtml();
+    $('#pickerList').innerHTML = pickerList(ui.pickQuery || '');
+  },
+  star(el) {
+    const id = el.dataset.id;
+    const list = stars();
+    state.settings.gymStars = list.includes(id) ? list.filter(x => x !== id) : [...list, id];
+    save();
+    if ($('#pickerList') && ui.sheet?.type === 'picker') $('#pickerList').innerHTML = pickerList(ui.pickQuery || '');
+    else if (ui.sheet) renderSheet();
+    toast(state.settings.gymStars.includes(id) ? `${exercise(id).name} starred: at your gym` : 'Star removed');
+  },
   pick(el) {
     if (state.activeWorkout.exercises.some(e => e.exId === el.dataset.id) && !confirm('Already added. Add it again?')) return;
     addExercise(el.dataset.id);
@@ -2439,7 +2551,13 @@ const actions = {
     const c = setCtx(el);
     const f = el.dataset.f;
     const d = +el.dataset.d;
-    if (f === 'weight') {
+    if (f === 'weight' && isAssist(c.ex)) {
+      // + adds assistance (the number shown), which makes the set easier.
+      const inc = increment(c.ex);
+      const base = -(c.s.weight ?? c.s.target?.weight ?? 0);
+      c.s.weight = -Math.max(0, Math.round((base + d * inc) / inc) * inc);
+      retarget(c);
+    } else if (f === 'weight') {
       const inc = increment(c.ex);
       const base = c.s.weight ?? c.s.target?.weight ?? 0;
       c.s.weight = Math.max(0, Math.round((base + d * inc) / inc) * inc);
@@ -2450,7 +2568,7 @@ const actions = {
     }
     save();
     const input = c.row.querySelector(`[data-field="${f}"]`);
-    input.value = f === 'weight' ? fmtW(c.s.weight) : c.s.reps;
+    input.value = f === 'weight' ? fmtW(shownW(c.ex, c.s.weight)) : c.s.reps;
     input.classList.remove('bump');
     void input.offsetWidth;
     input.classList.add('bump');
@@ -2492,7 +2610,9 @@ const actions = {
     const c = setCtx(el);
     const s = c.e.sets.find(x => !x.done) || c.e.sets.at(-1);
     const kg = isKg(U());
-    openSheet({ type: 'plates', exId: c.e.exId, weight: s?.weight ?? s?.target?.weight ?? (kg ? 60 * LB_PER_KG : 135), bar: kg ? 20 : 45 });
+    // Plate-loaded machines log plates only, so there's no bar to subtract.
+    const noBar = c.ex.equipment === 'plate_loaded';
+    openSheet({ type: 'plates', exId: c.e.exId, weight: s?.weight ?? s?.target?.weight ?? (kg ? 60 * LB_PER_KG : 135), bar: noBar ? 0 : kg ? 20 : 45 });
   },
   platesStep(el) {
     const step = isKg(U()) ? 2.5 * LB_PER_KG : 5;
@@ -2611,6 +2731,21 @@ const actions = {
     render();
   },
 
+  // Matching custom exercises to the library
+  matchSheet(el) { ui.matchQ = ''; openSheet({ type: 'match', fromId: el.dataset.id }); },
+  matchPick(el) { openSheet({ type: 'matchConfirm', fromId: ui.sheet.fromId, toId: el.dataset.id }); },
+  matchBack() { openSheet({ type: 'match', fromId: ui.sheet.fromId }); },
+  matchDo() {
+    const { fromId, toId } = ui.sheet;
+    const name = exercise(toId).name;
+    let result;
+    try { result = mergeExercise(state, fromId, toId); } catch (e) { toast(e.message); return; }
+    withUndo(`Matched to ${name}`, () => replaceState(result.state));
+    closeSheet();
+    render();
+    toast(`History moved to ${name}`);
+  },
+
   // Safety note and 'This hurt'
   safetyOk() { state.settings.safetyAck = new Date().toISOString(); save(); closeSheet(); render(); },
   hurtSheet() { openSheet({ type: 'hurt', ei: ui.sheet.ei }); },
@@ -2708,7 +2843,9 @@ const actions = {
     if (state.plan && !confirm('Start a new plan? Your history stays; the new plan starts block 1 this week.')) return;
     const profile = setupProfile(d);
     const plan = createPlan({
-      profile, splitId: d.splitId, exercises: allExercises(), usage: usageCounts(), workouts: state.workouts, lookup: exercise,
+      // Start fresh: only common versions and starred machines, not what you happened to use.
+      ...(() => { const p = d.fresh ? planPool(usable(), { stars: stars() }) : pool(); return { exercises: p.exercises, usage: p.usage }; })(),
+      profile, splitId: d.splitId, workouts: state.workouts, lookup: exercise, fresh: !!d.fresh,
       blocked: blockedLifts(state.settings, { profile, excluded: state.plan?.excluded || [] }),
     });
     // Learned exclusions carry over to a new plan.
@@ -2769,7 +2906,7 @@ const actions = {
 
   // Block review
   reviewSheet() {
-    ui.review = runReview(state.plan, { workouts: state.workouts, lookup: exercise, bwOn: bodyweightOn, exercises: allExercises(), usage: usageCounts(), blocked: blocked(), secPerSet: pace() });
+    ui.review = runReview(state.plan, { workouts: state.workouts, lookup: exercise, bwOn: bodyweightOn, exercises: pool().exercises, usage: pool().usage, blocked: blocked(), secPerSet: pace() });
     ui.reviewAcc = { volume: {}, swaps: [] };
     openSheet({ type: 'review' });
   },
@@ -3129,14 +3266,21 @@ document.addEventListener('pointerdown', ev => {
 
 document.addEventListener('input', ev => {
   const el = ev.target;
-  if (el.id === 'pickerSearch') { $('#pickerList').innerHTML = pickerList(el.value); return; }
+  if (el.id === 'pickerSearch') {
+    ui.pickQuery = el.value;
+    $('#pickerList').innerHTML = pickerList(el.value);
+    const fl = $('#pickFilters'); if (fl) fl.innerHTML = pickFiltersHtml();
+    return;
+  }
+  if (el.id === 'matchSearch') { ui.matchQ = el.value; $('#matchList').innerHTML = matchListHtml(); return; }
+  if (el.id === 'cName') { $('#cMatches').innerHTML = customMatchesHtml(el.value, $('#cMuscle')?.value); return; }
   // Keep typed names in the draft so re-rendering the sheet doesn't lose them.
   if (el.id === 'spName' || el.id === 'tplName') { ui.sheet.draft.name = el.value; return; }
   const f = el.dataset.field;
   if (f === 'weight' || f === 'reps') {
     const c = setCtx(el);
     let v = el.value.trim() === '' ? null : parseFloat(el.value);
-    if (f === 'weight' && v != null && !Number.isNaN(v)) v = fromDisplay(v, U());
+    if (f === 'weight' && v != null && !Number.isNaN(v)) v = fromDisplay(v, U()) * (isAssist(c.ex) ? -1 : 1);
     if (v != null && Number.isNaN(v)) return;
     c.s[f] = v;
     if (f === 'weight') retarget(c);
@@ -3166,6 +3310,7 @@ document.addEventListener('change', async ev => {
   const el = ev.target;
   if (el.dataset.field === 'progressEx') { ui.progressEx = el.value; render(); return; }
   if (el.id === 'cMuscle') { $('#cRegion').innerHTML = regionOptions(el.value); return; }
+  if (el.id === 'suFresh') { ui.setup.fresh = el.checked; return; }
   if (el.id === 'photoInput' && el.files[0]) {
     const file = el.files[0];
     el.value = '';

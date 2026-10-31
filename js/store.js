@@ -11,7 +11,8 @@ function emptyState() {
     settings: { defaultRest: 90, lastBackup: null, weeklyTarget: 10, accent: 'lime', standards: null, deloadUntil: null, deloadDismissed: null, ignoredRegions: [], neglectSnooze: {},
       units: 'lb', safetyAck: null,
       painFlags: {}, // exId -> ISO date of the 'This hurt' report; kept out of plans and suggestions
-      readinessCheck: true },
+      readinessCheck: true,
+      gymStars: [] },      // exercise ids marked 'at my gym'
     plan: null,           // weekly plan, see planner.js
     customExercises: [],
     exerciseSettings: {}, // exId -> { rest, increment, note }

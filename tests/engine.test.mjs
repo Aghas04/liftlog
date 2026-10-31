@@ -237,3 +237,56 @@ test('warm-ups use a 20 kg bar in kg mode', async () => {
   const w = warmupSets({ equipment: 'barbell' }, 100 * 2.20462, 2.5 * 2.20462, bar);
   assert.ok(w.length && w.every(s => s.weight >= bar - 1e-9 && s.weight < 100 * 2.20462));
 });
+
+// ---------- Assisted machines (assistance stored as negative weight) ----------
+const assistedPull = { equipment: 'assisted', compound: true };
+
+test('assisted: hitting the top of the range means less assistance, never below zero', async () => {
+  const { loadFor } = await import('../js/engine.js');
+  assert.equal(loadFor(assistedPull, -50, 180), 130);
+  assert.equal(loadFor(assistedPull, -250, 180), 0, 'load never negative');
+  const s = suggest(assistedPull, [{ date: daysAgo(3), sets: sets(-50, [12, 12, 12]) }], { increment: 10, now: NOW, bodyweight: 180 });
+  assert.equal(s.kind, 'up');
+  assert.ok(s.weight > -50 && s.weight <= 0, `assistance went from 50 to ${-s.weight}`);
+  assert.ok(s.reps[0] >= 6 && s.reps[0] <= 12, 'assisted lifts follow the weighted 6-12 range');
+  assert.match(s.reason, /less assistance/);
+});
+
+test('assisted: inside the range adds a rep at the same assistance', () => {
+  const s = suggest(assistedPull, [{ date: daysAgo(3), sets: sets(-50, [8, 7, 7]) }], { increment: 10, now: NOW, bodyweight: 180 });
+  assert.equal(s.weight, -50);
+  assert.equal(s.reps[0], 9);
+});
+
+test('assisted: too hard means more assistance, a deload adds assistance', () => {
+  const down = suggest(assistedPull, [{ date: daysAgo(3), sets: sets(-30, [3, 2, 2]) }], { increment: 10, now: NOW, bodyweight: 180 });
+  assert.ok(down.weight < -30, `assistance should go up from 30, got ${-down.weight}`);
+  const miss = [9, 6, 3].map(d => ({ date: daysAgo(d), sets: sets(-40, [5, 4, 4], [8, 8, 8]) }));
+  miss[0].sets = sets(-40, [8, 8, 8], [8, 8, 8]);
+  const dl = suggest(assistedPull, miss, { increment: 10, now: NOW, bodyweight: 180 });
+  assert.ok(dl.weight <= -40, `a lighter session must not reduce assistance (${-dl.weight})`);
+  const brk = suggest(assistedPull, [{ date: daysAgo(30), sets: sets(-40, [8, 8, 8]) }], { increment: 10, now: NOW, bodyweight: 180 });
+  assert.equal(brk.kind, 'break');
+  assert.ok(brk.weight < -40, 'easing back in adds assistance');
+});
+
+test('assisted: no assistance left suggests the bodyweight version', () => {
+  const s = suggest(assistedPull, [{ date: daysAgo(3), sets: sets(0, [12, 12, 12]) }], { increment: 10, now: NOW, bodyweight: 180 });
+  assert.equal(s.weight, 0);
+  assert.match(s.reason, /bodyweight version/);
+});
+
+test('assisted without bodyweight logged progresses reps, then less assistance', () => {
+  const a = suggest(assistedPull, [{ date: daysAgo(3), sets: sets(-50, [8, 8]) }], { increment: 10, now: NOW });
+  assert.equal(a.weight, -50);
+  assert.equal(a.reps[0], 9);
+  const b = suggest(assistedPull, [{ date: daysAgo(3), sets: sets(-50, [12, 12]) }], { increment: 10, now: NOW });
+  assert.equal(b.weight, -40);
+});
+
+test('new equipment types convert starting weights like their closest classic type', async () => {
+  const { swapWeight } = await import('../js/engine.js');
+  assert.equal(swapWeight({ equipment: 'barbell' }, { equipment: 'smith' }, 200, 5), 180);
+  assert.equal(swapWeight({ equipment: 'dumbbell' }, { equipment: 'plate_loaded' }, 50, 5), 100);
+  assert.equal(swapWeight({ equipment: 'barbell' }, { equipment: 'assisted' }, 200, 5), null);
+});

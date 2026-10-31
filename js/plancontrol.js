@@ -26,9 +26,26 @@ export function blockedLifts(settings = {}, plan = null) {
 }
 
 /** A fresh plan from the setup answers. */
-export function createPlan({ profile, splitId, exercises, usage, workouts, lookup, now = Date.now(), blocked = [], seed }) {
+/**
+ * Exercises a plan may pick: common versions, plus any version you've used or
+ * starred (so a plan never asks for a machine you've never touched). Starred
+ * lifts also count as used a few times, so they win ties.
+ */
+export function planPool(exercises, { usage = {}, stars = [] } = {}) {
+  const starred = new Set(stars);
+  // Custom lifts only when you've actually done them (their coverage is a guess).
+  const pool = exercises.filter(e => e.common || usage[e.id] || starred.has(e.id));
+  const rank = { ...usage };
+  for (const id of starred) rank[id] = (rank[id] || 0) + 5;
+  return { exercises: pool, usage: rank };
+}
+
+// fresh: start new — ignore past workouts when building the plan (starting
+// day, neglected areas, favorite lifts, breaks). Weight suggestions still use history.
+export function createPlan({ profile, splitId, exercises, usage, workouts, lookup, now = Date.now(), blocked = [], seed, fresh = false }) {
   const split = splitById(splitId);
   if (!split) throw new Error(`Unknown split ${splitId}`);
+  if (fresh) { workouts = []; usage = {}; }
   const s = seed ?? (Math.floor(now / DAY) % 100000);
   // The setup's avoid list always applies, whatever the caller passes.
   const allBlocked = [...new Set([...blocked, ...(profile.avoid || [])])];
@@ -39,6 +56,7 @@ export function createPlan({ profile, splitId, exercises, usage, workouts, looku
     seed: s, createdAt: new Date(now).toISOString(),
     // Start with the day type you're freshest for.
     rotationOffset: rotationOffsetFor(split, workouts || [], lookup, now),
+    ...(fresh ? { fresh: true } : {}),
     weekDays: {}, weekEdits: {}, edits: {}, excluded: [],
     pausedUntil: null, easeWeek: null, breakHandled: null, reviewDismissed: null,
   };
@@ -84,7 +102,8 @@ export function maintainPlan(plan, workouts, now = Date.now(), lookup = null) {
     events.push('resumed');
   }
   if (!isPaused(next, now)) {
-    const last = workouts.length ? Math.max(...workouts.map(w => new Date(w.date).getTime())) : null;
+    const seen = ownWorkouts(next, workouts);
+    const last = seen.length ? Math.max(...seen.map(w => new Date(w.date).getTime())) : null;
     const since = last ?? new Date(next.createdAt).getTime();
     const gap = (now - since) / DAY;
     if (gap >= BREAK_DAYS && next.breakHandled !== String(since)) {
@@ -114,6 +133,8 @@ export function currentWeek(plan, workouts, lookup, now = Date.now(), secPerSet 
 // Workouts from an earlier plan keep their history but don't advance this
 // plan's rotation (their sequence numbers belong to the old plan).
 export function ownWorkouts(plan, workouts) {
+  // A fresh plan doesn't look at anything from before it was made.
+  if (plan.fresh) workouts = workouts.filter(w => w.date >= plan.createdAt);
   return workouts.map(w => (w.plan && w.plan.id !== plan.id ? { ...w, plan: undefined } : w));
 }
 
@@ -329,7 +350,7 @@ export function sessionEntries(session) {
 
 /** Run the block review with the plan's own settings. */
 export function runReview(plan, { workouts, lookup, bwOn, exercises, usage, blocked, secPerSet }) {
-  return reviewBlock({ profile: plan.profile, plan, workouts, lookup, bwOn, exercises, usage, blocked, secPerSet });
+  return reviewBlock({ profile: plan.profile, plan, workouts: ownWorkouts(plan, workouts), lookup, bwOn, exercises, usage, blocked, secPerSet });
 }
 
 /**

@@ -6,7 +6,7 @@ export const LB_PER_KG = 2.20462;
 export const CM_PER_IN = 2.54;
 
 // Typical gym jumps in kg per equipment type.
-export const KG_STEPS = { barbell: 2.5, dumbbell: 2, cable: 2.5, machine: 5, bodyweight: 2.5 };
+export const KG_STEPS = { barbell: 2.5, dumbbell: 2, cable: 2.5, machine: 5, bodyweight: 2.5, plate_loaded: 2.5, smith: 2.5, ez_bar: 2.5, trap_bar: 5, kettlebell: 4, assisted: 5 };
 
 export const isKg = units => units === 'kg';
 export const weightUnit = units => (isKg(units) ? 'kg' : 'lb');

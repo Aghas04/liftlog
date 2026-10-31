@@ -1,4 +1,5 @@
 // Exercise library, muscles, muscle regions and day types.
+import { MOVEMENTS } from './library.js';
 
 export const MUSCLES = {
   back: 'Back',
@@ -60,12 +61,20 @@ export const DAY_TYPES = [
 // Workouts made with "Build today's workout". Not shown in the split list.
 export const CUSTOM_SPLIT = { id: 'custom', name: 'Custom', icon: '🛠️', color: '#5ee0a0', muscles: Object.keys(MUSCLES) };
 
+// increment: default weight step in lb. 'machine' is a pin/dial weight stack.
+// Assisted machines store the assistance as a negative weight (BW - 50 lb).
 export const EQUIPMENT = {
   barbell: { name: 'Barbell', increment: 5 },
   dumbbell: { name: 'Dumbbell', increment: 5 },
   cable: { name: 'Cable', increment: 5 },
-  machine: { name: 'Machine', increment: 10 },
+  machine: { name: 'Pin/dial machine', increment: 10 },
+  plate_loaded: { name: 'Plate-loaded machine', increment: 5 },
+  smith: { name: 'Smith machine', increment: 5 },
+  ez_bar: { name: 'EZ bar', increment: 5 },
+  trap_bar: { name: 'Trap bar', increment: 10 },
+  kettlebell: { name: 'Kettlebell', increment: 5 },
   bodyweight: { name: 'Bodyweight', increment: 5 },
+  assisted: { name: 'Assisted machine', increment: 10 },
 };
 
 // regions: how much each set counts toward each region. 1 = main target,
@@ -173,12 +182,35 @@ export const EXERCISES = [
 // when nothing else trains that region with the available equipment.
 for (const id of ['nordic_curl', 'sissy_squat']) EXERCISES.find(e => e.id === id).hard = true;
 
+// Every exercise in the library: the hand-written ones above (ids kept so
+// history carries over) joined to their movement, plus every other equipment
+// version. Versions that aren't `common` only show up in plans once you've
+// used or starred them.
+for (const mv of MOVEMENTS) {
+  for (const [equipment, id, name, extra = {}] of mv.variants) {
+    const existing = id && EXERCISES.find(e => e.id === id);
+    const attrs = { movement: mv.key, ...mv.attrs, ...(extra.unilateral ? { unilateral: true } : {}), ...(extra.grip ? { grip: extra.grip } : {}) };
+    if (existing) {
+      Object.assign(existing, attrs, { equipment, common: true }, extra.hard ? { hard: true } : {});
+      continue;
+    }
+    EXERCISES.push({
+      id: id || `${mv.key}_${equipment}`, name, muscle: mv.muscle, equipment, compound: extra.compound ?? mv.compound,
+      regions: extra.regions || mv.regions, ...attrs, common: !!extra.common, ...(extra.hard ? { hard: true } : {}),
+    });
+  }
+}
+for (const e of EXERCISES) if (!e.movement) { e.movement = e.id; e.common = true; }
+
 // What equipment each setup choice allows.
 export const EQUIPMENT_PROFILES = {
-  gym: { name: 'Full gym', allows: ['barbell', 'dumbbell', 'cable', 'machine', 'bodyweight'] },
-  free: { name: 'Barbell, dumbbells & bodyweight', allows: ['barbell', 'dumbbell', 'bodyweight'] },
-  dumbbells: { name: 'Dumbbells & bodyweight', allows: ['dumbbell', 'bodyweight'] },
+  gym: { name: 'Full gym', allows: Object.keys(EQUIPMENT) },
+  free: { name: 'Barbell, dumbbells & bodyweight', allows: ['barbell', 'dumbbell', 'ez_bar', 'trap_bar', 'kettlebell', 'bodyweight'] },
+  dumbbells: { name: 'Dumbbells & bodyweight', allows: ['dumbbell', 'kettlebell', 'bodyweight'] },
 };
+
+// The angle and position words used by search and filters.
+export const ANGLES = { flat: 'Flat', incline: 'Incline', decline: 'Decline' };
 
 export const allowedBy = (profileId, ex) => (EQUIPMENT_PROFILES[profileId] || EQUIPMENT_PROFILES.gym).allows.includes(ex.equipment);
 

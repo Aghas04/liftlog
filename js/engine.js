@@ -21,6 +21,14 @@ export function zoneFor(ex) {
   return ex.compound ? [6, MAX_REPS] : [8, MAX_REPS];
 }
 
+// Bodyweight and assisted lifts move your bodyweight. Assisted machines store
+// the assistance as a negative weight, so load = bodyweight - assistance and
+// "heavier" still means a bigger number (-40 is harder than -50).
+export const usesBodyweight = ex => ex.equipment === 'bodyweight' || ex.equipment === 'assisted';
+export function loadFor(ex, weight, bw) {
+  return usesBodyweight(ex) ? Math.max(0, (bw || 0) + (weight || 0)) : weight || 0;
+}
+
 export function workingSets(session) {
   return (session.sets || []).filter(s => s.done && !s.warmup && s.reps > 0);
 }
@@ -37,10 +45,9 @@ export function sessionMissed(session) {
 
 // Best estimated 1RM of a session. `bw` is bodyweight for bodyweight lifts.
 export function sessionE1RM(session, ex, bw) {
-  const isBW = ex.equipment === 'bodyweight';
   let best = 0;
   for (const s of workingSets(session)) {
-    const load = isBW ? (bw || 0) + (s.weight || 0) : s.weight || 0;
+    const load = loadFor(ex, s.weight, bw);
     if (load > 0) best = Math.max(best, epley(load, s.reps));
   }
   return best;
@@ -157,7 +164,11 @@ export function suggest(ex, history, opts) {
   // Weights stay in lb; the app passes a formatter so messages read in the user's unit.
   const fw = opts.formatWeight || (v => `${Math.round(v * 10) / 10} lb`);
   const now = opts.now ?? Date.now();
+  // isBW: pure bodyweight lifts, which may go past 12 reps. Assisted lifts
+  // follow the weighted rules, but their load includes bodyweight too.
   const isBW = ex.equipment === 'bodyweight';
+  const assisted = ex.equipment === 'assisted';
+  const bwLoad = isBW || assisted;
   const bw = opts.bodyweight || 0;
   // opts.zone overrides the rep range (strength-goal main lifts use [3, 6]).
   const zone = opts.zone || zoneFor(ex);
@@ -178,11 +189,13 @@ export function suggest(ex, history, opts) {
   const lastSets = workingSets(last);
   const topWeight = Math.max(...lastSets.map(s => s.weight || 0));
   // No weight was entered (only bodyweight lifts can be done at 0 lb).
-  if (!isBW && !(topWeight > 0)) return null;
+  if (!bwLoad && !(topWeight > 0)) return null;
   // Plan your usual number of sets, so one short day doesn't stick.
   const n = Math.min(8, Math.max(1, ...valid.slice(-3).map(s => workingSets(s).length)));
   const drop = fatigueDrop(lastSets);
-  const loadOf = w => (isBW ? bw + w : w);
+  const loadOf = w => (bwLoad ? Math.max(0, bw + w) : w);
+  // Assisted: a lighter session means more assistance, worked out on total load.
+  const lighter = (frac, round) => (assisted ? Math.min(0, round(frac * (bw + topWeight) - bw, inc)) : Math.max(0, round(topWeight * frac, inc)));
   let est = 0;
   let note = '';
   let fatigue = null;
@@ -228,11 +241,19 @@ export function suggest(ex, history, opts) {
     const reps = [];
     for (let i = 0; i < n; i++) reps.push(Math.max(floor, Math.round(first - drop * i)));
     // The fatigue explanation is kept separate so the app can show it only on request.
-    return { weight: Math.max(0, weight), reps, kind, reason, fatigueNote: note, est, drop, bonus, fatigue, zone };
+    return { weight: assisted ? Math.min(0, weight) : Math.max(0, weight), reps, kind, reason, fatigueNote: note, est, drop, bonus, fatigue, zone };
   };
 
   // Bodyweight lift with no bodyweight logged: total load is unknown, so
   // progress reps at the same added weight.
+  if (assisted && !bw) {
+    const best = Math.max(...lastSets.map(s => s.reps));
+    if (best >= zMax && topWeight < 0) {
+      const w = Math.min(0, topWeight + inc);
+      return build(w, zMin + 2, 'up', `Hit ${best} reps — less assistance (${fw(-w)}). Log bodyweight in Health for smarter targets.`);
+    }
+    return build(topWeight, Math.min(zMax, best + 1), 'reps', `Beat last time by a rep (best was ${best}).`);
+  }
   if (isBW && !bw) {
     const best = Math.max(...lastSets.map(s => s.reps));
     if (best >= zMax + 3) {
@@ -280,7 +301,7 @@ export function suggest(ex, history, opts) {
   const gapDays = (now - new Date(lastDate).getTime()) / DAY;
   if (gapDays > 14) {
     est *= 0.93;
-    const w = Math.max(0, roundTo(topWeight * 0.9, inc));
+    const w = lighter(0.9, roundTo);
     const t = Math.min(zMax, Math.max(zMin, Math.round(repsAt(est, loadOf(w)))));
     return build(w, t, 'break', `${Math.round(gapDays)} days since last time — easing back in.`);
   }
@@ -299,8 +320,8 @@ export function suggest(ex, history, opts) {
     for (let i = valid.length - 1; i >= 0 && valid[i].date > lastDeload && sessionMissed(valid[i]) && weaker(i); i--) c++;
     return c;
   })();
-  if (missedStreak >= 2 && topWeight > 0) {
-    const w = Math.max(0, floorTo(topWeight * 0.9, inc));
+  if (missedStreak >= 2 && (topWeight > 0 || assisted)) {
+    const w = lighter(0.9, floorTo);
     const t = Math.min(zMax, Math.max(zMin, Math.round(repsAt(est, loadOf(w)))));
     return build(w, t, 'deload', 'Missed targets 2 sessions in a row — lighter weight to rebuild.');
   }
@@ -308,10 +329,13 @@ export function suggest(ex, history, opts) {
   let w = topWeight;
   let t = Math.round(repsAt(est, loadOf(w))) + 1;
 
+  if (t > zMax && assisted && w >= 0) {
+    return build(0, zMax, 'reps', 'No assistance needed anymore — time to try the bodyweight version.');
+  }
   if (t > zMax) {
     // Move up in weight until reps fall back inside the zone, but never more
-    // than ~10% in one session (at least one step).
-    const maxW = Math.max(w + inc, floorTo(w * 1.1, inc));
+    // than ~10% in one session (at least one step). Assisted: never past zero.
+    const maxW = assisted ? Math.min(0, w + inc) : Math.max(w + inc, floorTo(w * 1.1, inc));
     let w2 = w;
     let t2 = t;
     while (t2 > zMax && w2 + inc <= maxW + 1e-9) {
@@ -321,7 +345,7 @@ export function suggest(ex, history, opts) {
     if (!isBW) {
       // Double progression: never suggest a weight you've already done 12
       // reps with recently — go a step past it.
-      while (bestRepsAt(w2) >= zMax) w2 += inc;
+      while (bestRepsAt(w2) >= zMax && (!assisted || w2 + inc <= 0)) w2 += inc;
       t2 = Math.round(repsAt(est, loadOf(w2)));
     }
     t2 = Math.min(zMax, t2);
@@ -329,12 +353,12 @@ export function suggest(ex, history, opts) {
     const done = bestRepsAt(w2);
     if (t2 <= done) t2 = Math.min(zMax, done + 1);
     if (t2 >= zMin) {
-      return build(w2, t2, 'up', `Top of the rep range last time — up to ${fw(w2)}.`);
+      return build(w2, t2, 'up', assisted ? `Top of the rep range last time — less assistance (${fw(-w2)}).` : `Top of the rep range last time — up to ${fw(w2)}.`);
     }
     if (!isBW) {
       // Weighted lifts never go past 12, even when the next weight is a big
       // jump (small dumbbells): move up and start a little lower in the range.
-      return build(w2, Math.max(zMin - 2, t2), 'up', `Hit ${zMax} reps — up to ${fw(w2)}, fewer reps to start.`);
+      return build(w2, Math.max(zMin - 2, t2), 'up', assisted ? `Hit ${zMax} reps — less assistance (${fw(-w2)}), fewer reps to start.` : `Hit ${zMax} reps — up to ${fw(w2)}, fewer reps to start.`);
     }
     if (t > hardCap) {
       return build(w + inc, zMin, 'up', `Reps are very high — up ${fw(inc)}, reset to ${zMin} reps.`);
@@ -346,7 +370,7 @@ export function suggest(ex, history, opts) {
     // Too heavy for the zone: come down until it fits.
     let w2 = w;
     let t2 = t;
-    while (t2 < zMin && w2 - inc > 0) {
+    while (t2 < zMin && (assisted ? w2 - inc > -bw : w2 - inc > 0)) {
       // Don't drop to a weight you've already done 12 reps with — that's too
       // easy to grow from. Stay heavier with slightly fewer reps instead.
       // Only when the heavier weight is still achievable, and the 12 reps were
@@ -374,7 +398,7 @@ export function suggest(ex, history, opts) {
 // Returns null when the suggestion has no strength estimate to work from.
 export function targetFor(sug, ex, weight, setIndex, bw) {
   if (!sug || !sug.est) return null;
-  const load = ex.equipment === 'bodyweight' ? (bw || 0) + (weight || 0) : weight || 0;
+  const load = loadFor(ex, weight, bw);
   if (load <= 0) return null;
   const reps = repsAt(sug.est, load) + (sug.bonus || 0) - (sug.drop || 0) * setIndex;
   return Math.min((sug.zone || zoneFor(ex))[1], Math.max(1, Math.round(reps)));
@@ -386,7 +410,7 @@ export function targetFor(sug, ex, weight, setIndex, bw) {
  * asks) so the remaining sets get sensible targets at that weight.
  */
 export function calibrationFrom(ex, set, bw, zone) {
-  const load = ex.equipment === 'bodyweight' ? (bw || 0) + (set.weight || 0) : set.weight || 0;
+  const load = loadFor(ex, set.weight, bw);
   if (!(load > 0) || !(set.reps > 0)) return null;
   return {
     weight: set.weight || 0, reps: [], kind: 'calibrate', reason: 'Based on your first set today.',
@@ -418,8 +442,13 @@ const SWAP_FACTOR = {
   machine: { barbell: 0.9, dumbbell: 0.45, cable: 1, machine: 0.9 },
 };
 
+// Newer equipment types convert like their closest classic type. Plate-loaded
+// machines count the plates only, roughly like a pin machine.
+const SWAP_CLASS = { smith: 'barbell', ez_bar: 'barbell', trap_bar: 'barbell', kettlebell: 'dumbbell', plate_loaded: 'machine' };
+const swapClass = eq => SWAP_CLASS[eq] || eq;
+
 export function swapWeight(fromEx, toEx, weight, inc) {
-  const f = SWAP_FACTOR[fromEx.equipment]?.[toEx.equipment];
+  const f = SWAP_FACTOR[swapClass(fromEx.equipment)]?.[swapClass(toEx.equipment)];
   if (!f || !(weight > 0)) return null;
   return Math.max(inc, Math.round((weight * f) / inc) * inc);
 }
