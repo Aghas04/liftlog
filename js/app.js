@@ -59,6 +59,8 @@ const ui = {
   progressMetric: 'e1rm',
   sheet: null,
   ranges: loadRanges(), // chart key -> range id
+  openCards: new Set(), // finished exercises opened again
+  timerMini: (() => { try { return !!localStorage.getItem('liftlog.timerMini'); } catch { return false; } })(),
 };
 
 function loadRanges() {
@@ -524,23 +526,48 @@ function tick() {
   const a = Math.abs(left);
   const txt = `${over ? '+' : ''}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`;
   const pct = over ? 100 : Math.max(0, Math.min(100, 100 - (left / t.total) * 100));
+  // Heads-up buzz 10 seconds before the next set.
+  if (!over && left <= 10 && left > 0 && !t.warned) { t.warned = true; navigator.vibrate?.(60); }
   // Build the controls once so taps aren't lost when the numbers update.
   if (!el.firstElementChild) {
     el.innerHTML = `
-      <div class="ring"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="19" class="track"/><circle cx="22" cy="22" r="19" class="fill"/></svg></div>
-      <div class="tt"><div class="t"></div><div class="lbl"></div></div>
-      <button data-act="timerAdj" data-d="-15">−15</button>
-      <button data-act="timerAdj" data-d="15">+15</button>
-      <button data-act="timerStop" aria-label="Stop timer">✕</button>`;
+      <button class="ring" data-act="timerMini" aria-label="Make timer smaller or bigger"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" class="track"/><circle cx="50" cy="50" r="44" class="fill"/></svg><span class="t"></span></button>
+      <div class="tt"><div class="lbl"></div><div class="next"></div>
+        <div class="tbtns"><button data-act="timerAdj" data-d="-15">−15s</button><button data-act="timerAdj" data-d="15">+15s</button><button data-act="timerStop" aria-label="Skip rest">Skip</button></div></div>`;
   }
-  const dt = dayType(w.dayType);
   el.hidden = false;
-  el.className = over ? 'over' : '';
-  el.style.setProperty('--c', dt?.color || '');
+  // Color slides from a calm blue while you rest to your accent color as the
+  // next set gets close; the last 10 seconds pulse, then it glows when done.
+  const mix = over ? 100 : Math.round(Math.max(0, Math.min(100, (pct - 40) / 60 * 100)));
+  el.style.setProperty('--c', `color-mix(in srgb, var(--accent) ${mix}%, #3ed4ff)`);
+  el.className = [over ? 'over' : '', !over && left <= 10 ? 'soon' : '', ui.timerMini ? 'mini' : ''].join(' ').trim();
   el.querySelector('.t').textContent = txt;
-  el.querySelector('.lbl').textContent = over ? 'Rest done — next set!' : `Rest · ${exercise(t.exId).name}`;
-  const C = 2 * Math.PI * 19;
+  el.querySelector('.lbl').textContent = over ? 'Go — next set!' : left <= 10 ? 'Get ready…' : `Resting · ${exercise(t.exId).name}`;
+  el.querySelector('.next').textContent = upNextText(w);
+  const C = 2 * Math.PI * 44;
   el.querySelector('.fill').style.strokeDasharray = `${(pct / 100) * C} ${C}`;
+}
+
+// "Up next: Bench Press · set 3 of 4 · 185 lb × 8"
+function upNextText(w) {
+  for (const e of w.exercises) {
+    const work = e.sets.filter(x => !x.warmup);
+    const k = work.findIndex(x => !x.done);
+    if (k < 0) continue;
+    const ex = exercise(e.exId);
+    const st = work[k];
+    const wt = st.weight ?? st.target?.weight;
+    const load = wt != null ? weightLabel(ex, wt) : '';
+    const reps = st.target?.reps ? ` × ${st.target.reps}` : '';
+    return `Up next: ${ex.name} · set ${k + 1} of ${work.length}${load ? ` · ${load}${reps}` : ''}`;
+  }
+  return 'Last set done — finish when ready';
+}
+
+// Bring the exercise you're on into view.
+function scrollToCurrent() {
+  const card = document.querySelector('.ex-card.current');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 setInterval(tick, 500);
 
@@ -609,9 +636,29 @@ function bestBefore(c) {
   return best;
 }
 
-function exCard(w, ctx, ei, live) {
+// Index of the exercise you're on: the first one with sets left.
+const currentIndex = w => w.exercises.findIndex(e => !cardComplete(e));
+
+// A finished exercise folds down to one line (tap to open it again).
+function doneCardHtml(w, ctx, ei) {
   const e = w.exercises[ei];
   const ex = exercise(e.exId);
+  const pr = e.sets.some(s => s.done && s.pr);
+  return `<section class="ex-card done-card" data-w="${ctx}" data-e="${ei}" style="--c:${dayType(w.dayType)?.color}">
+    <button class="dc-head" data-act="toggleCard" data-uid="${e.uid}">
+      <span class="dc-check">${ICON.check}</span>
+      <div class="dc-txt"><b>${esc(ex.name)}${pr ? ' <em class="dc-pr">🏆 PR</em>' : ''}</b><small>${esc(setsSummary(ex, e.sets.filter(x => !x.warmup)))}</small></div>
+      <span class="dc-open">Edit</span>
+    </button>
+    <div class="feel compact"><div class="seg">${Object.entries(FEEL).map(([v, l]) => `<button data-act="feel" data-v="${v}" class="${(e.difficulty || 'hard') === v ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+  </section>`;
+}
+
+function exCard(w, ctx, ei, live) {
+  const e = w.exercises[ei];
+  if (live && cardComplete(e) && !ui.openCards?.has(e.uid)) return doneCardHtml(w, ctx, ei);
+  const ex = exercise(e.exId);
+  const isCurrent = live && currentIndex(w) === ei;
   const hist = live ? historyFor(e.exId) : historyFor(e.exId, { excludeId: w.id, beforeIso: w.date });
   const last = [...hist].reverse().find(h => workingSets(h).length);
   const sug = e.suggestion;
@@ -635,7 +682,8 @@ function exCard(w, ctx, ei, live) {
     : '';
 
   return `
-  <section class="ex-card ${cardComplete(e) ? 'complete' : ''} ${e.group ? 'ss' : ''}" data-w="${ctx}" data-e="${ei}" style="--c:${dayType(w.dayType)?.color}">
+  <section class="ex-card ${cardComplete(e) ? 'complete' : ''} ${e.group ? 'ss' : ''} ${isCurrent ? 'current' : ''}" data-w="${ctx}" data-e="${ei}" style="--c:${dayType(w.dayType)?.color}">
+    ${isCurrent ? '<div class="now-tag">▶ Now</div>' : ''}
     ${e.group ? `<div class="ss-label">🔗 Superset ${groupLetter(w, e.group)}</div>` : ''}
     <div class="ex-head">
       <div><span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[ex.muscle] || ''}</span><h3>${esc(ex.name)}</h3></div>
@@ -713,10 +761,16 @@ function setProgress(w) {
   return { done, total };
 }
 
+const exerciseCountText = w => {
+  const i = currentIndex(w);
+  return i < 0 ? 'all done 🎉' : `exercise ${i + 1} of ${w.exercises.length}`;
+};
+
 function updateProgress() {
   const w = state.activeWorkout;
   const el = $('#setProg');
   if (!w || !el) return;
+  const ec = $('#exCount'); if (ec) ec.textContent = exerciseCountText(w);
   const { done, total } = setProgress(w);
   el.querySelector('i').style.width = total ? (done / total) * 100 + '%' : '0';
   $('#setCount').textContent = `${done}/${total} sets`;
@@ -732,7 +786,7 @@ function viewWorkout() {
       <div class="workout-head">
         <div class="top">
           <div class="wh-title"><span class="day-ico sm">${dt.icon}</span>
-            <div><h1>${esc(dt.name)}</h1><div class="sub">${w.templateName ? `<span class="tpl-tag">${esc(w.templateName)}</span> ` : ''}<span id="elapsed">0 min</span> · <span id="setCount">${done}/${total} sets</span></div></div></div>
+            <div><h1>${esc(dt.name)}</h1><div class="sub">${w.templateName ? `<span class="tpl-tag">${esc(w.templateName)}</span> ` : ''}<span id="elapsed">0 min</span> · <span id="setCount">${done}/${total} sets</span>${w.exercises.length ? ` · <span id="exCount">${exerciseCountText(w)}</span>` : ''}</div></div></div>
           <button class="finish-btn" data-act="finishSheet">Finish</button>
         </div>
         <div class="prog" id="setProg"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
@@ -2684,6 +2738,16 @@ const actions = {
     }
     c.card.classList.toggle('complete', cardComplete(c.e));
     updateProgress();
+    if (c.ctx === 'active' && c.s.done && cardComplete(c.e)) {
+      ui.openCards?.delete(c.e.uid);
+      setTimeout(() => { render(); scrollToCurrent(); }, 550);
+    }
+  },
+  toggleCard(el) {
+    ui.openCards ||= new Set();
+    const id = el.dataset.uid;
+    if (ui.openCards.has(id)) ui.openCards.delete(id); else ui.openCards.add(id);
+    render();
   },
   platesSheet(el) {
     const c = setCtx(el);
@@ -3276,6 +3340,11 @@ const actions = {
   setRestCustom() { applyRest(parseInt($('#restCustom').value, 10)); },
   timerAdj(el) { adjustTimer(+el.dataset.d); },
   timerStop() { stopTimer(); },
+  timerMini() {
+    ui.timerMini = !ui.timerMini;
+    try { localStorage.setItem('liftlog.timerMini', ui.timerMini ? '1' : ''); } catch { /* private mode */ }
+    tick();
+  },
 
   finishSheet() { openSheet({ type: 'finish' }); },
   finish() { finishWorkout(); },
