@@ -2,6 +2,8 @@ import { MUSCLES, EQUIPMENT, REGIONS, CUSTOM_SPLIT, EQUIPMENT_PROFILES, ANGLES, 
 import { searchExercises, matchSuggestions } from './search.js';
 import { mergeExercise, mergePreview, moveHistory } from './merge.js';
 import { packWorkout, unpackWorkout, resolveShared } from './together.js';
+import { workoutsCsv } from './export.js';
+import { tipsFor } from './tips.js';
 import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion } from './builder.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
@@ -9,7 +11,7 @@ import {
 } from './store.js';
 import {
   suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
-  personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor,
+  personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor, deloadSuggestion, deloadSetCount,
 } from './engine.js';
 import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter } from './planner.js';
 import {
@@ -61,6 +63,7 @@ const ui = {
   sheet: null,
   ranges: loadRanges(), // chart key -> range id
   openCards: new Set(), // finished exercises opened again
+  secOpen: new Set(['workout']), // open Settings sections
   timerMini: (() => { try { return !!localStorage.getItem('liftlog.timerMini'); } catch { return false; } })(),
 };
 
@@ -108,6 +111,9 @@ const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 const isBW = ex => ex.equipment === 'bodyweight';
 // Assisted machines store assistance as a negative weight; the user sees and types it as a positive number.
 const isAssist = ex => ex.equipment === 'assisted';
+// Timed holds (planks, hangs): the reps field holds seconds.
+const isTimed = ex => !!ex.timed;
+const repsTxt = (ex, n) => (isTimed(ex) ? `${n}s` : `${n}`);
 const shownW = (ex, w) => (isAssist(ex) && w != null && w !== '' ? -w : w);
 const stars = () => state.settings.gymStars || [];
 
@@ -228,7 +234,8 @@ function setsSummary(ex, sets) {
   const ws = sets.filter(s => s.done && s.reps > 0);
   if (!ws.length) return '';
   const sameW = ws.every(s => s.weight === ws[0].weight);
-  if (sameW) return `${weightLabel(ex, ws[0].weight)} × ${ws.map(s => s.reps).join(', ')}`;
+  if (isTimed(ex) && !ws.some(s => s.weight)) return ws.map(s => `${s.reps}s`).join(', ');
+  if (sameW) return `${weightLabel(ex, ws[0].weight)} × ${ws.map(s => repsTxt(ex, s.reps)).join(', ')}`;
   return ws.map(s => `${isAssist(ex) ? `−${fmtW(-s.weight)}` : fmtW(s.weight) || 'BW'}×${s.reps}`).join(', ');
 }
 
@@ -250,7 +257,8 @@ function startWorkout(dayId, from, template, name, extra = {}, readiness = null)
   for (const e of from?.exercises || []) {
     const entry = buildEntry(e.exId, null, fatigueFor(e.exId, w.exercises.length), e.zone);
     if (e.group) entry.group = groups[e.group] ||= uid();
-    if (e.sets > 0) resizeSets(entry, e.sets);
+    // Planned set counts shrink in a deload week, like the suggestion's own sets do.
+    if (e.sets > 0) resizeSets(entry, inDeload() ? deloadSetCount(e.sets) : e.sets);
     w.exercises.push(entry);
   }
   if (readiness) {
@@ -338,7 +346,7 @@ function suggestionFor(ex, fatigue = 0, zone = null) {
   if (sug && inDeload()) {
     // 'deloadWeek' (not 'deload'): only these sessions get excluded from future
     // estimates. A lighter session after missed targets still counts normally.
-    sug = { ...sug, weight: Math.max(0, Math.round((sug.weight * 0.85) / inc) * inc), est: 0, kind: 'deloadWeek', reason: 'Deload week — about 15% lighter so you recover and come back stronger.' };
+    sug = deloadSuggestion(sug, ex, inc, bodyweightOn());
   }
   return sug;
 }
@@ -513,6 +521,7 @@ function adjustTimer(delta) {
 }
 
 function tick() {
+  holdTick();
   const w = state.activeWorkout;
   const el = $('#timer');
   const elapsed = $('#elapsed');
@@ -562,7 +571,7 @@ function upNextText(w) {
     const st = work[k];
     const wt = st.weight ?? st.target?.weight;
     const load = wt != null ? weightLabel(ex, wt) : '';
-    const reps = st.target?.reps ? ` × ${st.target.reps}` : '';
+    const reps = st.target?.reps ? ` × ${repsTxt(ex, st.target.reps)}` : '';
     return `Up next: ${ex.name} · set ${k + 1} of ${work.length}${load ? ` · ${load}${reps}` : ''}`;
   }
   return 'Last set done — finish when ready';
@@ -611,20 +620,23 @@ function setRow(ctx, ei, si, e, ex, s, live) {
       <button data-act="step" data-f="weight" data-d="1" aria-label="More weight">+</button>
     </div>
     <div class="stepper reps">
-      <button data-act="step" data-f="reps" data-d="-1" aria-label="Fewer reps">−</button>
-      <input data-field="reps" inputmode="numeric" value="${s.reps ?? ''}" placeholder="${s.target ? s.target.reps : 'reps'}" aria-label="Reps">
+      ${isTimed(ex) && live && !s.done
+        ? `<button class="hold-btn" data-act="holdToggle" aria-label="Time this hold">${holdingRow(ctx, ei, si) ? '■' : '▶'}</button>`
+        : '<button data-act="step" data-f="reps" data-d="-1" aria-label="Fewer reps">−</button>'}
+      <input data-field="reps" inputmode="numeric" value="${s.reps ?? ''}" placeholder="${s.target ? s.target.reps : isTimed(ex) ? 'sec' : 'reps'}" aria-label="${isTimed(ex) ? 'Seconds' : 'Reps'}">
       <button data-act="step" data-f="reps" data-d="1" aria-label="More reps">+</button>
     </div>
     <button class="check" data-act="done" aria-label="Mark set done">${ICON.check}</button>
-    ${s.target || (s.done && s.pr) ? `<div class="goal">${goalText(s)}</div>` : ''}
+    ${s.target || (s.done && s.pr) ? `<div class="goal">${goalText(s, ex)}</div>` : ''}
   </div>`;
 }
 
-function goalText(s) {
+function goalText(s, ex) {
   const status = setStatus(s);
   const parts = [];
   if (s.done && s.pr) parts.push('🏆 New PR');
-  if (s.target) parts.push(status === 'miss' ? `missed · goal ${s.target.reps}` : status === 'near' ? `1 short · goal ${s.target.reps}` : `goal ${s.target.reps}`);
+  const g = s.target ? `goal ${s.target.reps}${ex && isTimed(ex) ? 's' : ''}` : '';
+  if (s.target) parts.push(status === 'miss' ? `missed · ${g}` : status === 'near' ? `1 short · ${g}` : g);
   return parts.join(' · ');
 }
 
@@ -672,13 +684,16 @@ function exCard(w, ctx, ei, live) {
   if (live) {
     if (sug?.kind === 'calibrate') {
       sugHtml = `<div class="suggest"><div class="target">🎯 Targets set from your first set</div><div class="why">Later sets aim to match it, then drop about a rep each.</div></div>`;
+    } else if (sug && isTimed(ex)) {
+      sugHtml = `<div class="suggest"><div class="target">⏱ ${sug.reps.map(r => `${r}s`).join(' · ')}${sug.weight ? ` · ${weightLabel(ex, sug.weight)}` : ''}</div><div class="why">${esc(sug.reason)}</div></div>`;
     } else if (sug) {
       // The workout-order adjustment stays out of sight mid-workout; it's one tap away.
       sugHtml = `<div class="suggest"><div class="target">🎯 ${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}</div><div class="why">${esc(sug.reason)}</div>
         ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}</div>`;
     } else {
       const [lo, hi] = e.zone || zoneFor(ex);
-      sugHtml = `<div class="suggest first"><div class="why">New lift: pick a weight you could do about ${Math.min(hi, lo + 4)} times with good form and stop with 2 reps left. After the first set, the app sets targets for the rest.</div></div>`;
+      if (isTimed(ex)) sugHtml = `<div class="suggest first"><div class="why">New hold: tap ▶ to time it and stop when your form starts to break. Next time the app sets a goal.</div></div>`;
+      else sugHtml = `<div class="suggest first"><div class="why">New lift: pick a weight you could do about ${Math.min(hi, lo + 4)} times with good form and stop with 2 reps left. After the first set, the app sets targets for the rest.</div></div>`;
     }
   }
   const lastHtml = last
@@ -701,7 +716,7 @@ function exCard(w, ctx, ei, live) {
     </div>
     ${note ? `<div class="ex-note">📝 ${esc(note)}</div>` : ''}
     ${e.zone ? `<div class="zone-tag">Strength · ${e.zone[0]}–${e.zone[1]} reps</div>` : ''}${sugHtml}${lastHtml}
-    <div class="set-head"><span>Set</span><span>${isAssist(ex) ? 'Assist ' + wu() : isBW(ex) ? '+ ' + wu() : wu()}</span><span>Reps</span><span></span></div>
+    <div class="set-head"><span>Set</span><span>${isAssist(ex) ? 'Assist ' + wu() : isBW(ex) ? '+ ' + wu() : wu()}</span><span>${isTimed(ex) ? 'Seconds' : 'Reps'}</span><span></span></div>
     ${e.sets.map((s, si) => setRow(ctx, ei, si, e, ex, s, live)).join('')}
     <div class="set-actions">
       <button class="minus" data-act="removeSet">− Set</button>
@@ -840,6 +855,7 @@ function viewWorkout() {
     </div>
     <div class="week-days">${week}</div>
   </div>
+  ${!isStandalone() && isPhone() ? `<button class="banner install-banner" data-act="installSheet"><div>📲 <b>Add to Home Screen</b> so your data is kept safe.</div><span>How?</span></button>` : ''}
   ${needsBackup ? `<div class="banner"><div>It's been a while since your last backup.</div><button data-act="export">Back up</button></div>` : ''}
   ${deloadBanner()}
   ${reviewCardHtml()}
@@ -1115,7 +1131,10 @@ function progressLifts() {
     top: h => Math.max(...workingSets(h).map(s => loadOf(ex, s.weight, h.date))),
     volume: h => sessionVolume(ex, workingSets(h), h.date),
   }[ui.progressMetric];
-  const allPoints = hist.map(h => ({ x: new Date(h.date).getTime(), y: toDisplay(metricFn(h), U()), info: setsSummary(ex, h.sets) })).filter(p => p.y > 0);
+  // Holds chart the longest hold in seconds (no unit conversion).
+  const timedLift = isTimed(ex);
+  ui.chartUnit = timedLift ? 's' : null;
+  const allPoints = hist.map(h => ({ x: new Date(h.date).getTime(), y: timedLift ? sessionE1RM(h, ex, 0) : toDisplay(metricFn(h), U()), info: setsSummary(ex, h.sets) })).filter(p => p.y > 0);
   // Flag PRs over the full history so a short range doesn't invent new "bests".
   let best = -Infinity;
   allPoints.forEach((p, i) => { p.pr = i > 0 && p.y > best + 0.01; best = Math.max(best, p.y); });
@@ -1124,7 +1143,7 @@ function progressLifts() {
   const lastY = allPoints.at(-1)?.y ?? 0;
   const firstY = points[0]?.y ?? 0;
   const delta = firstY && points.length > 1 ? ((points.at(-1).y - firstY) / firstY) * 100 : 0;
-  const metricName = { e1rm: 'Est. 1-rep max', top: 'Top set weight', volume: 'Session volume' }[ui.progressMetric];
+  const metricName = timedLift ? 'Longest hold' : { e1rm: 'Est. 1-rep max', top: 'Top set weight', volume: 'Session volume' }[ui.progressMetric];
 
   // PRs
   const prs = exIds.map(id => {
@@ -1163,7 +1182,7 @@ function progressLifts() {
     ${[['e1rm', 'Strength'], ['top', 'Top set'], ['volume', 'Volume']].map(([v, l]) => `<button data-act="metric" data-v="${v}" class="${ui.progressMetric === v ? 'on' : ''}">${l}</button>`).join('')}
   </div>
   <div class="chart-wrap">
-    <div class="chart-head"><div><div class="muted small">${metricName}</div><b>${dispW(lastY).toLocaleString()} ${wu()}</b></div>
+    <div class="chart-head"><div><div class="muted small">${metricName}</div><b>${Math.round(lastY).toLocaleString()} ${timedLift ? 's' : wu()}</b></div>
       ${points.length > 1 ? `<span class="delta ${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(1)}% ${rangeOf('lift')[3]}</span>` : ''}</div>
     ${allPoints.length > 1 ? rangeChips('lift') : ''}
     ${rangedChart(points, allPoints.length, { prs: ui.progressMetric !== 'volume', trend: true }, 'Log this lift again to see a trend.')}
@@ -1178,7 +1197,7 @@ function progressLifts() {
 
   <div class="section-title">Personal records</div>
   <div class="card pr-list">
-    ${prs.map(p => `<div class="pr"><span>${esc(p.x.name)}</span><span class="muted">${esc(weightLabel(p.x, p.heavy.weight))} × ${p.heavy.reps}${p.best ? ` · <b>${dispW(p.best)}</b> e1RM` : ''}</span></div>`).join('')}
+    ${prs.map(p => `<div class="pr"><span>${esc(p.x.name)}</span><span class="muted">${isTimed(p.x) ? `longest hold <b>${Math.round(p.best)}s</b>` : `${esc(weightLabel(p.x, p.heavy.weight))} × ${p.heavy.reps}${p.best ? ` · <b>${dispW(p.best)}</b> e1RM` : ''}`}</span></div>`).join('')}
   </div>`;
 }
 
@@ -1394,7 +1413,15 @@ const usable = () => { const b = new Set(blocked()); return allExercises().filte
 const pace = () => paceFromHistory(state.workouts, state.settings.defaultRest);
 // What plans and suggestions may pick: common versions plus anything you've used or starred.
 const pool = () => planPool(usable(), { usage: usageCounts(), stars: stars() });
-const planCtx = () => { const p = pool(); return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage }; };
+// deload / deloadNext: a deload week covers this week / next week, so the plan plans fewer sets.
+const planCtx = () => {
+  const p = pool();
+  const until = state.settings.deloadUntil ? new Date(state.settings.deloadUntil).getTime() : 0;
+  const nextMon = planWeekKey(Date.now()) + 7 * DAY + 12 * 3600000;
+  // A deload that touched last week: its low volume isn't a shortfall to make up.
+  const lastMon = planWeekKey(Date.now()) - 7 * DAY;
+  return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, deload: inDeload(), deloadNext: until > nextMon, deloadPrev: until > lastMon && until - 7 * DAY < planWeekKey(Date.now()) };
+};
 const todayIdx = () => (new Date().getDay() + 6) % 7;
 
 // Ended pauses, long breaks, spent edits. Saves only when something changed.
@@ -1536,7 +1563,7 @@ function viewPlan() {
 // Rep range shown for a planned item.
 function itemZone(it) {
   const [lo, hi] = it.main ? STRENGTH_ZONE : zoneFor(exercise(it.exId));
-  return `${lo}–${hi} reps`;
+  return `${lo}–${hi} ${exercise(it.exId).timed ? 'seconds' : 'reps'}`;
 }
 
 function startPlanned(seq, readiness) {
@@ -1823,6 +1850,26 @@ function keepOut(i, msg) {
   toast(msg);
 }
 
+// Short form cues for an exercise's movement.
+function tipsHtml(ex) {
+  const tips = tipsFor(ex);
+  return tips.length ? `<div class="tips"><div class="works-head">Form tips</div><ul>${tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : '';
+}
+
+// The hold being timed right now: { ctx, ei, si, start, target, beeped }.
+const holdingRow = (ctx, ei, si) => ui.hold && ui.hold.ctx === ctx && ui.hold.ei === ei && ui.hold.si === si;
+const holdSecs = () => (ui.hold ? Math.floor((Date.now() - ui.hold.start) / 1000) : 0);
+function holdTick() {
+  if (!ui.hold) return;
+  const secs = holdSecs();
+  const row = document.querySelector(`.set-row[data-w="${ui.hold.ctx}"][data-e="${ui.hold.ei}"][data-s="${ui.hold.si}"] [data-field="reps"]`);
+  if (row) row.value = secs;
+  const big = document.querySelector('#focus .fx-hold-time');
+  if (big) big.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  // Buzz when you reach the goal.
+  if (ui.hold.target && secs >= ui.hold.target && !ui.hold.beeped) { ui.hold.beeped = true; beep(); }
+}
+
 // Which parts of which muscles an exercise works, strongest first.
 function worksHtml(ex) {
   const regs = Object.entries(exerciseRegions(ex)).filter(([r]) => REGIONS[r]).sort((a, b) => b[1] - a[1]);
@@ -1919,17 +1966,21 @@ function focusRender() {
   el.innerHTML = `${top}<div class="fx-set">
     ${over ? '<div class="fx-go">Go — next set!</div>' : ''}
     <div class="fx-ex"><span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[ex.muscle] || ''}</span><h2>${esc(ex.name)}</h2>
-      <small>${st.warmup ? 'Warm-up set' : `Set ${k + 1} of ${work.length}`}${e.group ? ` · superset ${groupLetter(w, e.group)}` : ''}${st.target?.reps ? ` · goal ${st.target.reps} reps` : ''}</small>
+      <small>${st.warmup ? 'Warm-up set' : `Set ${k + 1} of ${work.length}`}${e.group ? ` · superset ${groupLetter(w, e.group)}` : ''}${st.target?.reps ? ` · goal ${repsTxt(ex, st.target.reps)}${isTimed(ex) ? '' : ' reps'}` : ''}</small>
       ${last ? `<small class="fx-last">Last time: ${esc(setsSummary(ex, last.sets))}</small>` : ''}
       ${!e.suggestion && !st.warmup && k === 0 ? '<small class="fx-last">New lift: pick a weight you could do about 10 times and stop with 2 reps left.</small>' : ''}</div>
     <div class="fx-field"><span>${isAssist(ex) ? 'Assistance' : isBW(ex) ? 'Added weight' : 'Weight'} (${wu()})</span>
       <div class="fx-stepper"><button data-act="focusStep" data-f="weight" data-d="-1" aria-label="Less">−</button>
         <input id="fW" inputmode="decimal" value="${wShown == null ? '' : fmtW(shownW(ex, wShown))}" placeholder="${isBW(ex) ? '0' : wu()}">
         <button data-act="focusStep" data-f="weight" data-d="1" aria-label="More">+</button></div></div>
-    <div class="fx-field"><span>Reps</span>
+    ${isTimed(ex) ? (holdingRow('active', t.ei, t.si)
+      ? `<div class="fx-hold"><div class="fx-hold-time">0:00</div>${st.target?.reps ? `<small>goal ${st.target.reps}s</small>` : ''}<button class="fx-hold-btn stop" data-act="focusHold">■ Stop</button></div>`
+      : `<div class="fx-hold"><button class="fx-hold-btn" data-act="focusHold">▶ Start hold${st.target?.reps ? ` · goal ${st.target.reps}s` : ''}</button>
+        <div class="fx-field"><span>Or type the seconds</span><div class="fx-stepper"><button data-act="focusStep" data-f="reps" data-d="-5" aria-label="Less">−</button><input id="fR" inputmode="numeric" value="${st.reps ?? st.target?.reps ?? ''}" placeholder="sec"><button data-act="focusStep" data-f="reps" data-d="5" aria-label="More">+</button></div></div></div>`)
+    : `<div class="fx-field"><span>Reps</span>
       <div class="fx-stepper"><button data-act="focusStep" data-f="reps" data-d="-1" aria-label="Fewer">−</button>
         <input id="fR" inputmode="numeric" value="${st.reps ?? st.target?.reps ?? ''}" placeholder="reps">
-        <button data-act="focusStep" data-f="reps" data-d="1" aria-label="More">+</button></div></div>
+        <button data-act="focusStep" data-f="reps" data-d="1" aria-label="More">+</button></div></div>`}
     <button class="fx-done-btn" data-act="focusDone">${ICON.check} Done</button>
     <div class="fx-more"><button data-act="focusSkip">Skip rest of this exercise</button><button data-act="focusClose">Full view</button></div>
   </div>`;
@@ -2292,6 +2343,7 @@ function sheetHtml() {
       const steps = stepChoices(U());
       return `<h2>${esc(ex.name)}</h2>
         ${worksHtml(ex)}
+        ${tipsHtml(ex)}
         <label class="field" style="margin-top:14px"><span>Note — shows every time you do this lift</span>
           <textarea id="exNote" rows="2" placeholder="e.g. Seat height 4, wide grip">${esc(exSetting(e.exId, 'note') || '')}</textarea></label>
         <button class="btn" data-act="saveNote">Save note</button>
@@ -2408,6 +2460,7 @@ function sheetHtml() {
       return `<h2>${esc(ex.name)}</h2>
         <p class="muted small" style="margin-top:-6px">${EQUIP_ICON[ex.equipment] || ''} ${esc(EQUIPMENT[ex.equipment]?.name || '')} · ${MUSCLES[ex.muscle]} · ${ex.compound ? 'compound' : 'isolation'}${ex.unilateral ? ' · one side at a time' : ''}</p>
         ${worksHtml(ex)}
+        ${tipsHtml(ex)}
         <div class="stack" style="margin-top:14px">${state.activeWorkout ? `<button class="btn primary" data-act="pick" data-id="${ex.id}">Add to workout</button>` : ''}
           <button class="btn" data-act="pickerBack">Back</button></div>`;
     }
@@ -2442,6 +2495,20 @@ function sheetHtml() {
         ${busy ? '<p class="muted small"><b>Finish or discard your current workout first.</b></p>' : ''}
         <div class="stack"><button class="btn primary" data-act="joinStart" ${busy ? 'disabled style="opacity:.5"' : ''}>Start this workout</button>
           <button class="btn" data-act="closeSheet">Not now</button></div>`;
+    }
+    case 'install': {
+      const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      return `<h2>📲 Add LiftLog to your Home Screen</h2>
+        <p class="muted small">In a normal Safari tab, iPhone can clear a website's data after a few weeks without visits. Added to your Home Screen, LiftLog works like an app, opens full screen and keeps your data.</p>
+        <ol class="steps">
+          ${ios ? `<li>Tap the <b>Share</b> button <span class="share-ico">⎋</span> (the square with an arrow) at the bottom of Safari.</li>
+          <li>Scroll down and tap <b>Add to Home Screen</b>.</li>
+          <li>Tap <b>Add</b>, then open LiftLog from the new icon on your Home Screen.</li>`
+          : `<li>Open the browser menu (⋮ or the Share button).</li><li>Tap <b>Add to Home Screen</b> or <b>Install app</b>.</li><li>Open LiftLog from the new icon.</li>`}
+        </ol>
+        <div class="banner info"><div><b>Already logged workouts here?</b> The Home Screen app has its own storage. First tap <b>Export backup</b> below, then open the Home Screen app and use Settings → Data → Import backup.</div></div>
+        <div class="stack"><button class="btn" data-act="export">Export backup</button>
+          <button class="btn primary" data-act="installDone">Got it</button></div>`;
     }
     case 'safety':
       return safetyHtml();
@@ -2513,57 +2580,64 @@ function sheetHtml() {
         </div>
         <p class="muted small" style="margin-top:10px">You can let it back in from Settings later.</p>`;
     }
-    case 'settings':
-      return `<h2>Settings</h2>
-        <div class="field"><span>Units</span>
-          <div class="chips">${[['lb', 'Pounds (lb)'], ['kg', 'Kilograms (kg)']].map(([v, l]) => `<button data-act="setUnits" data-v="${v}" class="${U() === v ? 'on' : ''}">${l}</button>`).join('')}</div>
-        </div>
-        <div class="field"><span>Accent color</span>
-          <div class="swatches">${Object.entries(ACCENTS).map(([k, hex]) => `<button data-act="accent" data-v="${k}" class="${(state.settings.accent || 'lime') === k ? 'on' : ''}" style="--sw:${hex}" aria-label="${k}"></button>`).join('')}</div>
-        </div>
-        ${state.settings.ignoredRegions.length ? `<div class="field"><span>Tracked areas — tap to track again</span>
-          <div class="chips">${state.settings.ignoredRegions.map(r => `<button data-act="unignoreRegion" data-r="${r}">↺ ${esc(REGIONS[r]?.name || r)}</button>`).join('')}</div>
-        </div>` : ''}
-        <div class="field"><span>Weekly set target per muscle</span>
-          <div class="chips">${[6, 8, 10, 12, 15, 20].map(v => `<button data-act="weeklyTarget" data-v="${v}" class="${state.settings.weeklyTarget === v ? 'on' : ''}">${v}</button>`).join('')}</div>
-        </div>
-        <div class="field"><span>Strength standards</span>
-          <div class="chips">${[['male', "Men's"], ['female', "Women's"]].map(([v, l]) => `<button data-act="setStandards" data-v="${v}" class="${state.settings.standards === v ? 'on' : ''}">${l}</button>`).join('')}</div>
-        </div>
+    case 'settings': {
+      // Collapsible sections; which ones are open survives re-renders.
+      const sec = (id, title, body, count = '') => body.trim() ? `<details class="set-sec" data-sec="${id}" ${ui.secOpen.has(id) ? 'open' : ''}><summary>${title}${count ? ` <small>${count}</small>` : ''}</summary><div class="set-body">${body}</div></details>` : '';
+      const chips = (items, act, v, on) => `<div class="chips">${items.map(([k, l]) => `<button data-act="${act}" data-v="${k}" class="${on(k) ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+      const pains = Object.keys(state.settings.painFlags || {});
+      const away = state.settings.notAtGym || [];
+      const gymCount = stars().length + away.length + pains.length + state.customExercises.length;
+      const workout = `
+        <div class="field"><span>Units</span>${chips([['lb', 'Pounds (lb)'], ['kg', 'Kilograms (kg)']], 'setUnits', null, k => U() === k)}</div>
+        <div class="field"><span>Rest timer for isolation lifts. Big compound lifts get at least 2 min, strength sets (3–6 reps) 3 min. Set any lift your own way in its ••• menu</span>
+          ${chips([60, 90, 120, 180].map(v => [v, `${v}s`]), 'defaultRest', null, k => state.settings.defaultRest === k)}</div>
         <div class="field"><span>Readiness check before planned and template workouts</span>
-          <div class="chips"><button data-act="readinessToggle" class="${state.settings.readinessCheck !== false ? 'on' : ''}">${state.settings.readinessCheck !== false ? 'On' : 'Off'}</button></div>
-        </div>
-        ${Object.keys(state.settings.painFlags || {}).length ? `<div class="field"><span>Lifts that hurt — kept out of plans. Tap to allow again</span>
-          <div class="chips">${Object.keys(state.settings.painFlags).map(id => `<button data-act="unpain" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div>
-        </div>` : ''}
-        ${(state.settings.notAtGym || []).length ? `<div class="field"><span>Not at my gym — never suggested. Tap if your gym gets it</span>
-          <div class="chips">${state.settings.notAtGym.map(id => `<button data-act="atGymAgain" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div>
-        </div>` : ''}
-        ${stars().length ? `<div class="field"><span>At my gym (starred) — tap to unstar</span>
-          <div class="chips">${stars().map(id => `<button data-act="star" data-id="${id}">★ ${esc(exercise(id).name)}</button>`).join('')}</div>
-        </div>` : ''}
-        ${state.customExercises.length ? `<div class="field"><span>Your custom exercises — match one to the library so its history moves over</span>
-          <div class="custom-list">${state.customExercises.map(c => `<div class="custom-row"><b>${esc(c.name)}</b><small>${MUSCLES[c.muscle] || ''}</small><button data-act="matchSheet" data-id="${c.id}">Match</button></div>`).join('')}</div>
-        </div>` : ''}
-        ${state.plan?.excluded?.length ? `<div class="field"><span>Lifts the plan learned to skip. Tap to allow again</span>
-          <div class="chips">${state.plan.excluded.map(id => `<button data-act="unexclude" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div>
-        </div>` : ''}
-        <div class="field"><span>Rest timer for isolation lifts — big compound lifts get at least 2 min, strength sets (3–6 reps) 3 min. Set any lift your own way in its ••• menu</span>
-          <div class="chips">${[60, 90, 120, 180].map(v => `<button data-act="defaultRest" data-v="${v}" class="${state.settings.defaultRest === v ? 'on' : ''}">${v}s</button>`).join('')}</div>
-        </div>
-        <div class="section-title">Backup</div>
+          <div class="chips"><button data-act="readinessToggle" class="${state.settings.readinessCheck !== false ? 'on' : ''}">${state.settings.readinessCheck !== false ? 'On' : 'Off'}</button></div></div>
+        <div class="field"><span>Weekly set target per muscle (used by "Build today's workout" when you have no plan)</span>
+          ${chips([6, 8, 10, 12, 15, 20].map(v => [v, v]), 'weeklyTarget', null, k => state.settings.weeklyTarget === k)}</div>
+        <div class="field"><span>Strength standards</span>${chips([['male', "Men's"], ['female', "Women's"]], 'setStandards', null, k => state.settings.standards === k)}</div>`;
+      const plan = state.plan ? `
+        <div class="stack"><button class="btn" data-act="planSetup">⚙️ Plan settings</button></div>
+        ${state.plan.excluded?.length ? `<div class="field" style="margin-top:12px"><span>Lifts the plan learned to skip. Tap to allow again</span>
+          <div class="chips">${state.plan.excluded.map(id => `<button data-act="unexclude" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div></div>` : ''}
+        <div class="stack" style="margin-top:12px"><button class="btn danger" data-act="deletePlan">Delete weekly plan</button></div>`
+        : `<p class="muted small">No weekly plan yet.</p><button class="btn" data-act="planSetup">Set up a plan</button>`;
+      const gym = `
+        ${stars().length ? `<div class="field"><span>Starred: at my gym. Tap to unstar</span>
+          <div class="chips">${stars().map(id => `<button data-act="star" data-id="${id}">★ ${esc(exercise(id).name)}</button>`).join('')}</div></div>` : ''}
+        ${away.length ? `<div class="field"><span>Not at my gym, never suggested. Tap if your gym gets it</span>
+          <div class="chips">${away.map(id => `<button data-act="atGymAgain" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div></div>` : ''}
+        ${pains.length ? `<div class="field"><span>Lifts that hurt, kept out of plans. Tap to allow again</span>
+          <div class="chips">${pains.map(id => `<button data-act="unpain" data-id="${id}">↺ ${esc(exercise(id).name)}</button>`).join('')}</div></div>` : ''}
+        ${state.customExercises.length ? `<div class="field"><span>Your custom exercises. Match one to the library so its history moves over</span>
+          <div class="custom-list">${state.customExercises.map(c => `<div class="custom-row"><b>${esc(c.name)}</b><small>${MUSCLES[c.muscle] || ''}</small><button data-act="matchSheet" data-id="${c.id}">Match</button></div>`).join('')}</div></div>` : ''}
+        ${state.settings.ignoredRegions.length ? `<div class="field"><span>Areas you chose not to track. Tap to track again</span>
+          <div class="chips">${state.settings.ignoredRegions.map(r => `<button data-act="unignoreRegion" data-r="${r}">↺ ${esc(REGIONS[r]?.name || r)}</button>`).join('')}</div></div>` : ''}
+        ${gymCount ? '' : '<p class="muted small">Star machines your gym has (☆ in the exercise list), and use ••• during a workout for lifts that hurt or that your gym doesn\'t have. They show up here.</p>'}`;
+      const look = `<div class="field"><span>Accent color</span>
+          <div class="swatches">${Object.entries(ACCENTS).map(([k, hex]) => `<button data-act="accent" data-v="${k}" class="${(state.settings.accent || 'lime') === k ? 'on' : ''}" style="--sw:${hex}" aria-label="${k}"></button>`).join('')}</div></div>`;
+      const data = `
         <p class="muted small">Your data is stored only on this phone. Save a backup file to Files or iCloud Drive now and then.
           ${state.settings.lastBackup ? `Last backup: ${relDays(state.settings.lastBackup)}.` : 'No backup yet.'}</p>
         <div class="stack">
           <button class="btn primary" data-act="export">Export backup</button>
           <button class="btn" data-act="import">Import backup</button>
+          <button class="btn" data-act="exportCsv">📊 Export history as a spreadsheet (CSV)</button>
         </div>
-        <div class="section-title">About</div>
-        <div class="stack"><button class="btn" data-act="whySheet">📚 Why the plan works</button>
-          <button class="btn" data-act="safetySheet">👋 Safety note</button></div>
         <div class="section-title">Danger zone</div>
-        <div class="stack">${state.plan ? `<button class="btn danger" data-act="deletePlan">Delete weekly plan</button>` : ''}
-        <button class="btn danger" data-act="wipe">Delete all data</button></div>`;
+        <button class="btn danger" data-act="wipe">Delete all data</button>`;
+      const about = `<div class="stack"><button class="btn" data-act="whySheet">📚 Why the plan works</button>
+          <button class="btn" data-act="installSheet">📲 Add to Home Screen</button>
+          <button class="btn" data-act="safetySheet">👋 Safety note</button></div>`;
+      return `<h2>Settings</h2>
+        ${isStandalone() ? '' : '<button class="banner install-banner" data-act="installSheet"><div>📲 <b>Add LiftLog to your Home Screen</b> so iPhone doesn\'t clear your data.</div><span>How?</span></button>'}
+        ${sec('workout', '🏋️ Workout', workout)}
+        ${sec('plan', '🗓️ Plan', plan)}
+        ${sec('gym', '⭐ My gym & exercises', gym, gymCount ? String(gymCount) : '')}
+        ${sec('look', '🎨 Look', look)}
+        ${sec('data', '💾 Data & backup', data)}
+        ${sec('about', 'ℹ️ About', about)}`;
+    }
   }
   return '';
 }
@@ -2580,6 +2654,38 @@ function renderSheet() {
   root.dataset.type = ui.sheet.type;
   root.innerHTML = `<div class="overlay" data-act="closeSheet"></div><div class="panel"><div class="grip"></div>${sheetHtml()}</div>`;
   document.body.style.overflow = 'hidden';
+}
+
+// Opened from the Home Screen (installed), or in a browser tab?
+function isStandalone() {
+  try { return !!navigator.standalone || matchMedia('(display-mode: standalone)').matches; } catch { return false; }
+}
+const isPhone = () => /iPhone|iPad|iPod|Android/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+// Show the next first-run sheet, if any.
+function nextBootSheet() {
+  const next = ui.bootQueue?.shift();
+  if (next === 'join' && !ui.join) return nextBootSheet();
+  if (next) openSheet({ type: next });
+}
+
+async function exportCsvFile() {
+  const csv = workoutsCsv(state.workouts, exercise, U(), id => dayType(id).name);
+  const name = `liftlog-history-${todayStr()}.csv`;
+  const file = new File([csv], name, { type: 'text/csv' });
+  try {
+    if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'LiftLog history' });
+    else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(file);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }
+    toast('Spreadsheet saved');
+  } catch (e) {
+    if (e.name !== 'AbortError') alert('Export failed: ' + e.message);
+  }
 }
 
 // ---------- Backup ----------
@@ -2662,6 +2768,9 @@ const actions = {
     startWorkout(t.splitId, t, t);
   },
   safetySheet() { openSheet({ type: 'safety' }); },
+  installSheet() { openSheet({ type: 'install' }); },
+  installDone() { state.settings.installSeen = new Date().toISOString(); save(); closeSheet(); nextBootSheet(); },
+  exportCsv() { exportCsvFile(); },
 
   // Splits
   splitsSheet() { openSheet({ type: 'splits' }); },
@@ -3109,7 +3218,7 @@ const actions = {
     save();
     closeSheet();
     render();
-    if (ui.joinAfterSafety && ui.join) { ui.joinAfterSafety = false; openSheet({ type: 'join' }); }
+    nextBootSheet();
   },
   hurtSheet() { openSheet({ type: 'hurt', ei: ui.sheet.ei }); },
   hurtSwap() { openSheet({ type: 'swap', ei: ui.sheet.ei }); },
@@ -3537,6 +3646,39 @@ const actions = {
   setRestCustom() { applyRest(parseInt($('#restCustom').value, 10)); },
   timerAdj(el) { adjustTimer(+el.dataset.d); },
   timerStop() { stopTimer(); if (ui.focus) focusRender(); },
+  holdToggle(el) {
+    const c = setCtx(el);
+    const ei = +c.row.dataset.e, si = +c.row.dataset.s;
+    if (holdingRow(c.ctx, ei, si)) {
+      // Stop: the time becomes this set's seconds and the set is done.
+      c.s.reps = Math.max(1, holdSecs());
+      ui.hold = null;
+      save();
+      actions.done(c.row.querySelector('[data-act="done"]'));
+      return;
+    }
+    stopTimer();
+    unlockAudio();
+    ui.hold = { ctx: c.ctx, ei, si, start: Date.now(), target: c.s.target?.reps || 0 };
+    refreshRow(c.row);
+  },
+  focusHold() {
+    const w = state.activeWorkout;
+    const t = focusTarget(w);
+    if (!t) return;
+    const st = w.exercises[t.ei].sets[t.si];
+    if (holdingRow('active', t.ei, t.si)) {
+      st.reps = Math.max(1, holdSecs());
+      ui.hold = null;
+      save();
+      actions.focusDone();
+      return;
+    }
+    stopTimer();
+    unlockAudio();
+    ui.hold = { ctx: 'active', ei: t.ei, si: t.si, start: Date.now(), target: st.target?.reps || 0 };
+    focusRender();
+  },
   focusOpen() { if (!state.activeWorkout) return; ui.focus = true; closeSheet(); focusRender(); },
   focusClose() { ui.focus = false; closeFocusLayer(); render(); },
   focusStep(el) {
@@ -3738,7 +3880,7 @@ function syncRow(row, s) {
     goal.className = 'goal';
     row.appendChild(goal);
   }
-  if (goal) goal.textContent = goalText(s);
+  if (goal) goal.textContent = goalText(s, exercise(getW(row.dataset.w).exercises[+row.dataset.e].exId));
 }
 
 document.addEventListener('change', async ev => {
@@ -3799,7 +3941,10 @@ if (state.activeWorkout) { ui.tab = 'workout'; requestWakeLock(); }
 applyTheme();
 syncAchievements(); // silently record anything already earned
 render(true);
-if (!state.settings.safetyAck) openSheet({ type: 'safety' });
+// First-run sheets, one after another: safety note, install help, a shared workout.
+ui.bootQueue = [];
+if (!state.settings.safetyAck) ui.bootQueue.push('safety');
+if (!isStandalone() && !state.settings.installSeen && isPhone()) ui.bootQueue.push('install');
 // A workout shared with "Train together": #join=<code>
 (function openSharedWorkout() {
   const m = location.hash.match(/^#join=([A-Za-z0-9_-]+)$/);
@@ -3821,6 +3966,13 @@ if (!state.settings.safetyAck) openSheet({ type: 'safety' });
   });
   if (!resolved.exercises.length) { toast('None of those exercises are available here'); return; }
   ui.join = { ...shared, resolved };
-  if (state.settings.safetyAck) openSheet({ type: 'join' });
-  else ui.joinAfterSafety = true;
+  ui.bootQueue.push('join');
 })();
+nextBootSheet();
+
+// Settings sections: remember which are open.
+document.addEventListener('toggle', ev => {
+  const d = ev.target;
+  if (!d.matches?.('details.set-sec')) return;
+  if (d.open) ui.secOpen.add(d.dataset.sec); else ui.secOpen.delete(d.dataset.sec);
+}, true);

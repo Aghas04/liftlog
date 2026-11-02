@@ -387,3 +387,15 @@ test('2-hour sessions use the extra time and still fit it', () => {
   assert.ok(sets(long) > sets(normal) * 1.2, `${sets(long)} vs ${sets(normal)}`);
   for (const d of long.days.filter(x => x.kind === 'train')) assert.ok(d.session.estMinutes <= 120, `${d.session.name} ${d.session.estMinutes} min`);
 });
+
+test('a deload week plans about 40% fewer sets, still valid sessions', () => {
+  const profile = { ...base, days: [0, 1, 3, 4] };
+  const plan = makePlan(profile, 'upper_lower');
+  const sets = w => w.days.filter(d => d.kind === 'train').reduce((a, d) => a + d.session.items.reduce((b, i) => b + i.sets, 0), 0);
+  const normal = planWeek({ profile, plan, lookup, now: MONDAY });
+  const deload = planWeek({ profile, plan, lookup, now: MONDAY, deload: true });
+  const ratio = sets(deload) / sets(normal);
+  assert.ok(ratio > 0.45 && ratio < 0.75, `deload week has ${Math.round(ratio * 100)}% of the sets`);
+  assert.ok(deload.notes.some(n => /Deload week/.test(n)));
+  checkWeek(deload, profile, 'deload');
+});

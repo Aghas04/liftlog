@@ -290,3 +290,39 @@ test('new equipment types convert starting weights like their closest classic ty
   assert.equal(swapWeight({ equipment: 'dumbbell' }, { equipment: 'plate_loaded' }, 50, 5), 100);
   assert.equal(swapWeight({ equipment: 'barbell' }, { equipment: 'assisted' }, 200, 5), null);
 });
+
+test('deload week: about 15% lighter and about 40% fewer sets; assisted gets more assistance', async () => {
+  const { deloadSuggestion, deloadSetCount } = await import('../js/engine.js');
+  const sug = { weight: 200, reps: [8, 8, 7, 7], kind: 'reps', est: 250 };
+  const d = deloadSuggestion(sug, { equipment: 'barbell' }, 5);
+  assert.equal(d.weight, 170);
+  assert.equal(d.reps.length, 2);
+  assert.equal(d.kind, 'deloadWeek');
+  assert.deepEqual([2, 3, 4, 5].map(deloadSetCount), [1, 2, 2, 3]);
+  const a = deloadSuggestion({ weight: -40, reps: [8, 8, 8] }, { equipment: 'assisted' }, 10, 180);
+  assert.ok(a.weight < -40, `assistance should go up from 40, got ${-a.weight}`);
+  assert.equal(a.reps.length, 2);
+});
+
+// ---------- Timed holds (reps hold seconds) ----------
+const plank = { equipment: 'bodyweight', compound: false, timed: true };
+
+test('holds: 5 seconds longer after hitting every goal, same after a miss, harder version at 90s', async () => {
+  const { sessionE1RM, loadFor } = await import('../js/engine.js');
+  const held = (secs, goal) => secs.map(r => ({ weight: 0, reps: r, done: true, target: goal ? { weight: 0, reps: goal } : undefined }));
+  const a = suggest(plank, [{ date: daysAgo(3), sets: held([40, 40, 40], 40) }], { now: NOW });
+  assert.deepEqual(a.reps, [45, 45, 45]);
+  const b = suggest(plank, [{ date: daysAgo(3), sets: held([45, 38, 30], 45) }], { now: NOW });
+  assert.equal(b.reps[0], 45, 'missed goal: hold the same best time');
+  const c = suggest(plank, [{ date: daysAgo(3), sets: held([90, 90], 90) }], { now: NOW });
+  assert.equal(c.reps[0], 90);
+  assert.match(c.reason, /harder version/);
+  const d = suggest(plank, [{ date: daysAgo(30), sets: held([60, 60]) }], { now: NOW });
+  assert.equal(d.kind, 'break');
+  assert.ok(d.reps[0] < 60);
+  // First time ever: no suggestion; progress is the longest hold; holds add no volume.
+  assert.equal(suggest(plank, [], { now: NOW }), null);
+  assert.equal(sessionE1RM({ sets: held([30, 45, 40]) }, plank, 180), 45);
+  assert.equal(loadFor(plank, 0, 180), 0);
+  assert.equal(targetFor(a, plank, 0, 1, 180), 45);
+});

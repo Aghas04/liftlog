@@ -871,3 +871,32 @@ label.btn { cursor: pointer; }
 .join-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
 .join-row b { font-size: 14px; }
 .join-row small { color: var(--muted); font-size: 12px; flex: none; }
+
+/* ---------- Settings sections ---------- */
+.set-sec { border-radius: 16px; background: var(--surface-2); margin-bottom: 10px; overflow: hidden; }
+.set-sec > summary { list-style: none; cursor: pointer; padding: 14px 16px; font-weight: 800; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.set-sec > summary::-webkit-details-marker { display: none; }
+.set-sec > summary::after { content: '›'; margin-left: auto; font-size: 22px; color: var(--muted); transition: transform 0.2s; }
+.set-sec[open] > summary::after { transform: rotate(90deg); }
+.set-sec > summary small { font-size: 12px; font-weight: 800; padding: 1px 7px; border-radius: 99px; background: var(--surface); color: var(--muted); }
+.set-body { padding: 0 16px 16px; }
+.set-body .field:last-child { margin-bottom: 0; }
+.set-body .chips button { background: var(--surface); }
+.set-body .chips button.on { background: var(--accent); }
+.set-body .custom-row { background: var(--surface); }
+.install-banner { width: 100%; text-align: left; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--text); }
+.install-banner span { font-weight: 800; color: var(--accent); white-space: nowrap; }
+.share-ico { display: inline-block; padding: 0 5px; border-radius: 6px; background: var(--surface-2); font-weight: 900; }
+
+/* ---------- Holds and tips ---------- */
+.hold-btn { color: var(--accent) !important; font-size: 16px !important; }
+.set-row .stepper.reps .hold-btn { font-weight: 900; }
+.fx-hold { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.fx-hold-time { font-size: clamp(64px, 20vw, 92px); font-weight: 900; font-variant-numeric: tabular-nums; color: var(--accent); line-height: 1; }
+.fx-hold small { color: var(--muted); font-size: 14px; }
+.fx-hold-btn { width: 100%; height: 72px; border-radius: 22px; background: var(--surface-2); border: 2px solid var(--accent); color: var(--accent); font-size: 20px; font-weight: 900; }
+.fx-hold-btn.stop { background: var(--accent); color: var(--accent-ink); }
+.fx-hold .fx-field { width: 100%; }
+.tips { background: var(--surface-2); border-radius: 14px; padding: 12px; margin-top: 10px; }
+.tips ul { margin: 0 0 0 18px; font-size: 13px; line-height: 1.45; }
+.tips li + li { margin-top: 4px; }

@@ -170,7 +170,8 @@ test('plans: no muscle gets more than the per-session limit, and main lifts are 
 test('reps: weighted lifts stay in 6-12 (compound) or 8-12 (isolation); bodyweight up to 20', () => {
   for (const ex of EXERCISES) {
     const [lo, hi] = zoneFor(ex);
-    if (ex.equipment === 'bodyweight') assert.deepEqual([lo, hi], [6, 20]);
+    if (ex.timed) assert.deepEqual([lo, hi], [20, 90], `${ex.id}: holds are 20-90 seconds`);
+    else if (ex.equipment === 'bodyweight') assert.deepEqual([lo, hi], [6, 20]);
     else { assert.equal(hi, MAX_REPS); assert.equal(lo, ex.compound ? 6 : 8); }
   }
 });

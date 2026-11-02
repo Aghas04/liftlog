@@ -140,3 +140,23 @@ test('library: ab exercises cover both parts, and search finds them by name or t
   // "side" alone no longer drags in glute exercises for oblique searches.
   assert.ok(!searchExercises(EXERCISES, 'obliques').some(e => e.muscle === 'glutes'));
 });
+
+test('every movement has form tips', async () => {
+  const { TIPS, tipsFor } = await import('../js/tips.js');
+  const { MOVEMENTS } = await import('../js/library.js');
+  for (const m of MOVEMENTS) {
+    assert.ok(TIPS[m.key]?.length >= 2, `${m.key} has no tips`);
+    for (const t of TIPS[m.key]) assert.ok(t.length > 10 && t.length < 160, `${m.key}: tip length`);
+  }
+  assert.ok(tipsFor(EXERCISES.find(e => e.name === 'Plate-Loaded Incline Press')).length >= 2, 'versions share their movement\'s tips');
+  assert.deepEqual(tipsFor({ movement: 'nope' }), []);
+});
+
+test('timed holds exist, are found by search and stay out of plans unless used', () => {
+  for (const n of ['Plank', 'Side Plank', 'Dead Hang', 'Hollow Body Hold', 'Wall Sit']) {
+    const e = byName(n);
+    assert.ok(e && e.timed, `${n} missing or not timed`);
+    assert.ok(!e.common, `${n} is picked by plans`);
+  }
+  assert.equal(searchExercises(EXERCISES, 'plank')[0].name, 'Plank');
+});

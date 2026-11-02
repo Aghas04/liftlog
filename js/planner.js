@@ -13,7 +13,7 @@
 // - Priority lifts go first (Nunes 2021). Supersets save time without losing
 //   volume (Iversen 2021, 2024). Deloads only when needed (Coleman 2024).
 import { MUSCLES, REGIONS, regionsOf, exerciseRegions, primaryRegion, allowedBy } from './data.js';
-import { workingSets, sessionE1RM, sessionMissed } from './engine.js';
+import { workingSets, sessionE1RM, sessionMissed, DELOAD_SETS } from './engine.js';
 import { neglectedRegions, DIRECT, weekKey } from './insights.js';
 
 const DAY = 86400000;
@@ -415,7 +415,8 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
  * Plan workouts carry `plan: { seq }`. Returns { weekStart, days, notes, targets }.
  */
 export function planWeek(input) {
-  const { profile, plan, workouts = [], lookup, now = Date.now(), secPerSet = 130 } = input;
+  // deload: this is a deload week (fewer sets). carry: false turns off carrying last week's shortfall.
+  const { profile, plan, workouts = [], lookup, now = Date.now(), secPerSet = 130, deload = false, carry = true } = input;
   const split = splitById(plan.splitId);
   const ws = weekKey(now);
   const wk = String(ws);
@@ -502,7 +503,8 @@ export function planWeek(input) {
   // Volume: weekly targets minus what's already done this week, spread over
   // the remaining sessions (never above the per-session cap).
   let targets = weeklyTargets(profile, plan.volume, secPerSet);
-  const ease = plan.easeWeek && String(plan.easeWeek) === wk ? 0.7 : 1;
+  const easing = plan.easeWeek && String(plan.easeWeek) === wk;
+  const ease = (easing ? 0.7 : 1) * (deload ? DELOAD_SETS : 1);
   // The usual weekly goal per muscle (before any mid-week-start scaling).
   const goals = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * ease)]));
   // Smallest useful dose per session: half of a normal session's share, at
@@ -514,6 +516,36 @@ export function planWeek(input) {
     const freq = fullTypes.filter(t => PLAN_DAYS[t].muscles.includes(m)).length;
     if (freq) minSets[m] = Math.min(PER_SESSION_CAP, Math.max(2, Math.round(((targets[m] * ease) / freq) * 0.5)));
   }
+  // Last week ended short for a muscle (e.g. the last session was cut short):
+  // carry part of the gap into this week, at most a quarter of the weekly goal,
+  // never past the level's maximum. Weekly volume is what drives growth, so a
+  // small make-up keeps the average on target. Skipped after a deload, pause or
+  // easing-back week, and when the plan didn't exist for all of last week.
+  const prevStart = (() => { const d = new Date(ws); d.setDate(d.getDate() - 7); return d.getTime(); })();
+  const fullPrevWeek = new Date(plan.createdAt || 0).getTime() <= prevStart
+    && !(plan.activeFrom && new Date(plan.activeFrom).getTime() > prevStart)
+    && String(plan.easeWeek) !== String(prevStart);
+  if (carry && !deload && !easing && !input.prevDeload && startIdx === 0 && fullPrevWeek && plan.createdAt) {
+    const prevDone = {};
+    for (const w of workouts) {
+      const t = new Date(w.date).getTime();
+      if (t < prevStart || t >= ws) continue;
+      for (const e of w.exercises) {
+        const n = workingSets(e).length;
+        if (!n) continue;
+        const ex = lookup(e.exId);
+        prevDone[ex.muscle] = (prevDone[ex.muscle] || 0) + n;
+        for (const [m, wt] of Object.entries(indirectByMuscle(ex))) if (!MAJOR.includes(m)) prevDone[m] = (prevDone[m] || 0) + wt * n;
+      }
+    }
+    const made = [];
+    for (const m of Object.keys(targets)) {
+      const gap = Math.round(targets[m] - (prevDone[m] || 0));
+      const add = Math.min(gap, Math.ceil(targets[m] * 0.25), Math.max(0, volumeBounds(profile, m)[1] - targets[m]));
+      if (add > 0) { targets[m] += add; made.push(`${MUSCLES[m].toLowerCase()} +${add}`); }
+    }
+    if (made.length) notes.push(`Making up for last week: ${made.join(', ')} sets`);
+  }
   if (startIdx > 0 && weekdays.length) {
     const frac = weekdays.filter(d => d >= startIdx).length / weekdays.length;
     targets = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * frac)]));
@@ -521,7 +553,8 @@ export function planWeek(input) {
   }
   if (ease < 1) {
     targets = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * ease)]));
-    notes.push('Easing back in after a break: about 30% less volume this week');
+    if (deload) notes.push('Deload week: about 40% fewer sets and lighter weights, so you recover');
+    else notes.push('Easing back in after a break: about 30% less volume this week');
   }
   // Each set counts once for its own muscle (not once per region). Indirect
   // half-sets only count toward small muscles — the same way the week is

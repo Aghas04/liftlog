@@ -16,7 +16,10 @@ const floorTo = (x, inc) => Math.floor(x / inc) * inc;
 // Weighted lifts never go past 12 reps: at that point the weight goes up.
 // Only bodyweight lifts (push-ups, pull-ups, dips, sit-ups) go higher.
 export const MAX_REPS = 12;
+// Timed holds use seconds: 20-90 s, then a harder version.
+export const HOLD_ZONE = [20, 90];
 export function zoneFor(ex) {
+  if (ex.timed) return HOLD_ZONE;
   if (ex.equipment === 'bodyweight') return [6, 20];
   return ex.compound ? [6, MAX_REPS] : [8, MAX_REPS];
 }
@@ -26,6 +29,8 @@ export function zoneFor(ex) {
 // "heavier" still means a bigger number (-40 is harder than -50).
 export const usesBodyweight = ex => ex.equipment === 'bodyweight' || ex.equipment === 'assisted';
 export function loadFor(ex, weight, bw) {
+  // A hold isn't a load times reps; it adds nothing to volume totals.
+  if (ex.timed) return 0;
   return usesBodyweight(ex) ? Math.max(0, (bw || 0) + (weight || 0)) : weight || 0;
 }
 
@@ -45,6 +50,8 @@ export function sessionMissed(session) {
 
 // Best estimated 1RM of a session. `bw` is bodyweight for bodyweight lifts.
 export function sessionE1RM(session, ex, bw) {
+  // Holds: progress is the longest hold (seconds), not a 1-rep max.
+  if (ex.timed) return Math.max(0, ...workingSets(session).map(s => s.reps));
   let best = 0;
   for (const s of workingSets(session)) {
     const load = loadFor(ex, s.weight, bw);
@@ -159,7 +166,33 @@ export function personalFatigueRate(pointsByLift) {
  * @returns null when there is no usable history, else
  *          { weight, reps: number[], kind, reason }
  */
+/**
+ * Timed hold suggestion: the target time is your best last time plus 5 seconds
+ * when every set hit its goal, else the same. At 90 seconds, switch to a harder
+ * version (longer holds add little). reps hold seconds.
+ */
+function suggestHold(ex, history, opts) {
+  const usable = history.filter(s => workingSets(s).length);
+  if (!usable.length) return null;
+  const last = usable[usable.length - 1];
+  const sets = workingSets(last);
+  const best = Math.max(...sets.map(s => s.reps));
+  const hitAll = sets.every(s => !s.target || s.reps >= s.target.reps);
+  const [lo, hi] = HOLD_ZONE;
+  const n = Math.min(6, Math.max(1, ...usable.slice(-3).map(s => workingSets(s).length)));
+  const gap = ((opts.now ?? Date.now()) - new Date(last.date).getTime()) / DAY;
+  let t, kind, reason;
+  if (gap > 14) { t = Math.max(lo, Math.round(best * 0.85 / 5) * 5); kind = 'break'; reason = `${Math.round(gap)} days since last time — easing back in.`; }
+  else if (best >= hi) { t = hi; kind = 'hold'; reason = 'You can hold 90 seconds: try a harder version (weighted, longer lever, one side).'; }
+  else if (hitAll && best + 5 < lo) { t = lo; kind = 'reps'; reason = `Build up to a ${lo}-second hold.`; }
+  else if (hitAll) { t = Math.min(hi, best + 5); kind = 'reps'; reason = 'Hold 5 seconds longer than last time.'; }
+  else { t = Math.max(lo, best); kind = 'hold'; reason = 'Same time as your best last time.'; }
+  const topWeight = Math.max(0, ...sets.map(s => s.weight || 0));
+  return { weight: topWeight, reps: Array.from({ length: n }, () => t), kind, reason, est: 0, drop: 0, bonus: 0, zone: HOLD_ZONE, timed: true };
+}
+
 export function suggest(ex, history, opts) {
+  if (ex.timed) return suggestHold(ex, history, opts);
   const inc = opts.increment || 5;
   // Weights stay in lb; the app passes a formatter so messages read in the user's unit.
   const fw = opts.formatWeight || (v => `${Math.round(v * 10) / 10} lb`);
@@ -397,6 +430,7 @@ export function suggest(ex, history, opts) {
 // Rep target for one set when the lifter changes the weight mid-workout.
 // Returns null when the suggestion has no strength estimate to work from.
 export function targetFor(sug, ex, weight, setIndex, bw) {
+  if (ex.timed) return sug?.reps?.[setIndex] ?? sug?.reps?.at(-1) ?? null;
   if (!sug || !sug.est) return null;
   const load = loadFor(ex, weight, bw);
   if (load <= 0) return null;
@@ -410,6 +444,7 @@ export function targetFor(sug, ex, weight, setIndex, bw) {
  * asks) so the remaining sets get sensible targets at that weight.
  */
 export function calibrationFrom(ex, set, bw, zone) {
+  if (ex.timed) return null;
   const load = loadFor(ex, set.weight, bw);
   if (!(load > 0) || !(set.reps > 0)) return null;
   return {
@@ -446,6 +481,25 @@ const SWAP_FACTOR = {
 // machines count the plates only, roughly like a pin machine.
 const SWAP_CLASS = { smith: 'barbell', ez_bar: 'barbell', trap_bar: 'barbell', kettlebell: 'dumbbell', plate_loaded: 'machine' };
 const swapClass = eq => SWAP_CLASS[eq] || eq;
+
+/**
+ * A deload week's version of a suggestion: about 15% less load and about 40%
+ * fewer sets (a third to a half less volume), so fatigue drops while strength
+ * holds (Coleman et al. 2024; Bell et al. 2023). Assisted machines get more
+ * assistance, not less.
+ */
+export const DELOAD_LOAD = 0.85;
+export const DELOAD_SETS = 0.6;
+export const deloadSetCount = n => Math.max(1, Math.round(n * DELOAD_SETS));
+export function deloadSuggestion(sug, ex, inc, bw = 0) {
+  const w = ex.equipment === 'assisted'
+    ? Math.min(0, Math.round((DELOAD_LOAD * ((bw || 0) + sug.weight) - (bw || 0)) / inc) * inc)
+    : Math.max(0, Math.round((sug.weight * DELOAD_LOAD) / inc) * inc);
+  return {
+    ...sug, weight: w, reps: sug.reps.slice(0, deloadSetCount(sug.reps.length)), est: 0, kind: 'deloadWeek',
+    reason: 'Deload week: about 15% lighter and fewer sets, so you recover and come back stronger.',
+  };
+}
 
 export function swapWeight(fromEx, toEx, weight, inc) {
   const f = SWAP_FACTOR[swapClass(fromEx.equipment)]?.[swapClass(toEx.equipment)];

@@ -817,3 +817,43 @@ test("removing lifts from a session moves its sets to the week's other sessions"
   assert.ok(monBack[0].sets <= 4, 'one lift holds at most 4 sets');
   assert.ok(backSets(after) >= before - 1, `week back sets ${backSets(after)} vs ${before} before`);
 });
+
+test("last week's shortfall is partly made up this week, never after a deload", async () => {
+  const { planWeek } = await import('../js/planner.js');
+  const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
+  const plan = fresh(p6, 'upper_lower', MONDAY - 14 * DAY);
+  // Last week: every session done fully except the last two (cut short to their first lift).
+  const workouts = [];
+  for (let d = 0; d < 7; d++) {
+    const t = MONDAY - 7 * DAY + d * DAY + 9 * 3600000;
+    const day = todayOf(currentWeek(plan, workouts, lookup, t), t);
+    if (day.kind !== 'train') continue;
+    const w = doSession(plan, day, t);
+    if (d >= 4) w.exercises = w.exercises.slice(0, 1);
+    workouts.push(w);
+  }
+  const week = currentWeek(plan, workouts, lookup, MONDAY);
+  const usual = planWeek({ profile: p6, plan, workouts, lookup, now: MONDAY, carry: false });
+  assert.ok(week.notes.some(n => /Making up for last week/.test(n)), week.notes.join(' | '));
+  let more = 0;
+  for (const m of Object.keys(usual.targets)) {
+    assert.ok(week.targets[m] >= usual.targets[m]);
+    assert.ok(week.targets[m] - usual.targets[m] <= Math.ceil(usual.targets[m] * 0.25), `${m}: carried too much`);
+    if (week.targets[m] > usual.targets[m]) more++;
+  }
+  assert.ok(more > 0);
+  // Not after a deload week.
+  const afterDeload = planWeek({ profile: p6, plan, workouts, lookup, now: MONDAY, prevDeload: true });
+  assert.ok(!afterDeload.notes.some(n => /Making up/.test(n)));
+  // Not when the plan didn't exist all last week.
+  const young = fresh(p6, 'upper_lower', MONDAY - 3 * DAY);
+  assert.ok(!currentWeek(young, workouts, lookup, MONDAY).notes.some(n => /Making up/.test(n)));
+  // A full week leaves nothing to carry.
+  const full = [];
+  for (let d = 0; d < 7; d++) {
+    const t = MONDAY - 7 * DAY + d * DAY + 9 * 3600000;
+    const day = todayOf(currentWeek(plan, full, lookup, t), t);
+    if (day.kind === 'train') full.push(doSession(plan, day, t));
+  }
+  assert.ok(!currentWeek(plan, full, lookup, MONDAY).notes.some(n => /Making up/.test(n)), currentWeek(plan, full, lookup, MONDAY).notes.join(' | '));
+});

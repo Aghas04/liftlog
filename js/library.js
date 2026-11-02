@@ -348,6 +348,26 @@ export const MOVEMENTS = [
     ['bodyweight', 'dragon_flag', 'Dragon Flag', { hard: true }],
   ]),
 
+  // ---------- Timed holds (logged in seconds) ----------
+  M('plank', 'abs', false, { abs_rectus: 1, obliques: 0.4 }, { timed: true }, [
+    ['bodyweight', 'plank', 'Plank'], ['bodyweight', 'weighted_plank', 'Weighted Plank (plate on back)'],
+  ]),
+  M('side_plank', 'abs', false, { obliques: 1, abs_rectus: 0.3, glute_med: 0.3 }, { timed: true }, [
+    ['bodyweight', 'side_plank', 'Side Plank'],
+  ]),
+  M('hollow_hold', 'abs', false, { abs_rectus: 1, obliques: 0.3 }, { timed: true }, [
+    ['bodyweight', 'hollow_hold', 'Hollow Body Hold'],
+  ]),
+  M('l_sit', 'abs', false, { abs_rectus: 1, rectus_femoris: 0.4, tri_lateral: 0.2 }, { timed: true }, [
+    ['bodyweight', 'l_sit', 'L-Sit', { hard: true }],
+  ]),
+  M('dead_hang', 'forearms', false, { forearm_flexors: 1, lats: 0.2 }, { timed: true }, [
+    ['bodyweight', 'dead_hang', 'Dead Hang'],
+  ]),
+  M('wall_sit', 'quads', false, { vasti: 1, glute_max: 0.2 }, { timed: true }, [
+    ['bodyweight', 'wall_sit', 'Wall Sit'],
+  ]),
+
   // ---------- Forearms ----------
   M('wrist_curl', 'forearms', false, { forearm_flexors: 1 }, {}, [
     ['dumbbell', 'wrist_curl', null], ['barbell', null, 'Barbell Wrist Curl'], ['cable', null, 'Cable Wrist Curl'],
