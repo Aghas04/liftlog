@@ -900,3 +900,20 @@ label.btn { cursor: pointer; }
 .tips { background: var(--surface-2); border-radius: 14px; padding: 12px; margin-top: 10px; }
 .tips ul { margin: 0 0 0 18px; font-size: 13px; line-height: 1.45; }
 .tips li + li { margin-top: 4px; }
+
+/* ---------- How to ---------- */
+.howto-tabs { margin-bottom: 14px; }
+.howto-block { background: var(--surface-2); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+.howto-block ul, .howto-block ol { margin: 0 0 0 20px; font-size: 14px; line-height: 1.45; }
+.howto-block li + li { margin-top: 4px; }
+.howto-block p { font-size: 14px; line-height: 1.45; }
+.mistake { display: grid; gap: 2px; padding: 6px 0; font-size: 14px; border-top: 1px solid var(--line); }
+.mistake:first-of-type { border-top: 0; }
+.mistake .bad { color: var(--miss); font-weight: 700; }
+.mistake .good { color: var(--text); opacity: 0.9; }
+.sym-list { display: grid; gap: 6px; margin-bottom: 12px; }
+.sym-list button { text-align: left; padding: 12px 14px; border-radius: 12px; background: var(--surface-2); font-weight: 700; font-size: 14px; border: 2px solid transparent; }
+.sym-list button.on { border-color: var(--accent); }
+.fix-card { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 14px; padding: 14px; }
+.fix-card > p { font-size: 15px; line-height: 1.45; margin-bottom: 12px; }
+a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; }

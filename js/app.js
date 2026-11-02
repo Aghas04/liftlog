@@ -4,6 +4,7 @@ import { mergeExercise, mergePreview, moveHistory } from './merge.js';
 import { packWorkout, unpackWorkout, resolveShared } from './together.js';
 import { workoutsCsv } from './export.js';
 import { tipsFor } from './tips.js';
+import { howTo, videoUrl, SYMPTOMS, PAIN_SYMPTOMS } from './howto.js';
 import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion } from './builder.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
@@ -708,6 +709,7 @@ function exCard(w, ctx, ei, live) {
       <div><span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[ex.muscle] || ''}</span><h3>${esc(ex.name)}</h3></div>
       <div class="ex-tools">
         ${live && ['barbell', 'smith', 'plate_loaded'].includes(ex.equipment) ? `<button data-act="platesSheet" aria-label="Plate calculator">Plates</button>` : ''}
+        ${live ? `<button data-act="howtoOpen" aria-label="How to do it">How to</button>` : ''}
         ${live ? `<button data-act="restSheet">⏱ ${restFor(e.exId)}s</button>` : ''}
         ${live
           ? `<button data-act="exMenu" aria-label="Exercise options">•••</button>`
@@ -1982,7 +1984,7 @@ function focusRender() {
         <input id="fR" inputmode="numeric" value="${st.reps ?? st.target?.reps ?? ''}" placeholder="reps">
         <button data-act="focusStep" data-f="reps" data-d="1" aria-label="More">+</button></div></div>`}
     <button class="fx-done-btn" data-act="focusDone">${ICON.check} Done</button>
-    <div class="fx-more"><button data-act="focusSkip">Skip rest of this exercise</button><button data-act="focusClose">Full view</button></div>
+    <div class="fx-more"><button data-act="howtoOpen" data-id="${ex.id}">How to?</button><button data-act="focusSkip">Skip rest of this exercise</button><button data-act="focusClose">Full view</button></div>
   </div>`;
 }
 
@@ -2355,6 +2357,7 @@ function sheetHtml() {
           <button data-act="moveEx" data-d="1" ${s.ei === state.activeWorkout.exercises.length - 1 ? 'disabled' : ''}><span>⬇️</span>Move down</button>
           <button data-act="addWarmups"><span>🔥</span>Add warm-up sets</button>
           <button data-act="swapSheet"><span>🔄</span>Swap exercise</button>
+          <button data-act="howtoOpen" data-id="${e.exId}"><span>📖</span>How to do it · fix my form</button>
           <button data-act="hurtSheet"><span>🤕</span>This hurt</button>
           <button data-act="notAtGym"><span>🚫</span>My gym doesn't have this</button>
           <button data-act="star" data-id="${e.exId}"><span>${stars().includes(e.exId) ? '★' : '☆'}</span>${stars().includes(e.exId) ? 'Starred: at my gym' : 'Star: at my gym'}</button>
@@ -2461,7 +2464,7 @@ function sheetHtml() {
         <p class="muted small" style="margin-top:-6px">${EQUIP_ICON[ex.equipment] || ''} ${esc(EQUIPMENT[ex.equipment]?.name || '')} · ${MUSCLES[ex.muscle]} · ${ex.compound ? 'compound' : 'isolation'}${ex.unilateral ? ' · one side at a time' : ''}</p>
         ${worksHtml(ex)}
         ${tipsHtml(ex)}
-        <div class="stack" style="margin-top:14px">${state.activeWorkout ? `<button class="btn primary" data-act="pick" data-id="${ex.id}">Add to workout</button>` : ''}
+        <div class="stack" style="margin-top:14px"><button class="btn" data-act="howtoOpen" data-id="${ex.id}">📖 How to do it</button>${state.activeWorkout ? `<button class="btn primary" data-act="pick" data-id="${ex.id}">Add to workout</button>` : ''}
           <button class="btn" data-act="pickerBack">Back</button></div>`;
     }
     case 'matchConfirm': {
@@ -2509,6 +2512,38 @@ function sheetHtml() {
         <div class="banner info"><div><b>Already logged workouts here?</b> The Home Screen app has its own storage. First tap <b>Export backup</b> below, then open the Home Screen app and use Settings → Data → Import backup.</div></div>
         <div class="stack"><button class="btn" data-act="export">Export backup</button>
           <button class="btn primary" data-act="installDone">Got it</button></div>`;
+    }
+    case 'howto': {
+      const ex = exercise(s.exId);
+      const h = howTo(ex);
+      const tab = s.tab || 'steps';
+      const tabs = `<div class="seg howto-tabs">${[['steps', 'Steps'], ['fix', 'Fix it'], ['video', 'Video']].map(([v, l]) => `<button data-act="howtoTab" data-v="${v}" class="${tab === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+      const back = s.back ? '<button class="btn ghost" style="margin-top:12px" data-act="howtoBack">Back</button>' : '';
+      if (!h) {
+        return `<h2>${esc(ex.name)}</h2><p class="muted small">No how-to for custom exercises yet. Match it to a library exercise (Settings → My gym & exercises) to get steps and fixes, or watch a demo:</p>
+          <a class="btn primary" href="${videoUrl(ex)}" target="_blank" rel="noopener">▶ Watch a demo on YouTube</a>${back}`;
+      }
+      let body = '';
+      if (tab === 'steps') {
+        const tips = tipsFor(ex);
+        body = `<div class="howto-block"><div class="works-head">Setup</div><ul>${h.setup.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+          <div class="howto-block"><div class="works-head">How to do it</div><ol>${h.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></div>
+          <div class="howto-block"><div class="works-head">Breathing</div><p>${esc(h.breath)}</p></div>
+          ${tips.length ? `<div class="howto-block"><div class="works-head">Key cues</div><ul>${tips.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+          <div class="howto-block"><div class="works-head">Common mistakes</div>${h.mistakes.map(([m, fx]) => `<div class="mistake"><span class="bad">✗ ${esc(m)}</span><span class="good">✓ ${esc(fx)}</span></div>`).join('')}</div>`;
+      } else if (tab === 'fix') {
+        const sym = s.sym;
+        body = `<p class="muted small">What's going on? Tap one for a fix for this lift.</p>
+          <div class="sym-list">${SYMPTOMS.map(([k, l]) => `<button data-act="howtoSym" data-v="${k}" class="${sym === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
+          ${sym ? `<div class="fix-card"><p>${esc(h.fixes[sym])}</p>
+            <div class="stack"><button class="btn" data-act="howtoNote">📝 Save as a note for next time</button>
+            ${PAIN_SYMPTOMS.has(sym) && state.activeWorkout?.exercises.some(e => e.exId === ex.id) ? '<button class="btn" data-act="howtoHurt">🤕 This hurt: swap it out</button>' : ''}</div>
+            ${PAIN_SYMPTOMS.has(sym) ? '<p class="muted small">Sharp pain, or pain that lasts after the workout: stop and get it checked.</p>' : ''}</div>` : ''}`;
+      } else {
+        body = `<p class="muted small">Opens a YouTube search for a demo of this exact exercise. Needs internet and uses a little data.</p>
+          <a class="btn primary" href="${videoUrl(ex)}" target="_blank" rel="noopener">▶ Watch a demo on YouTube</a>`;
+      }
+      return `<h2>${esc(ex.name)}</h2>${tabs}${body}${back}`;
     }
     case 'safety':
       return safetyHtml();
@@ -2769,6 +2804,30 @@ const actions = {
   },
   safetySheet() { openSheet({ type: 'safety' }); },
   installSheet() { openSheet({ type: 'install' }); },
+  howtoOpen(el) {
+    const card = el.closest('.ex-card');
+    const exId = el.dataset.id || (card && getW(card.dataset.w)?.exercises[+card.dataset.e]?.exId) || ui.sheet?.exId;
+    if (!exId) return;
+    const back = ui.sheet ? { ...ui.sheet } : null;
+    openSheet({ type: 'howto', exId, tab: 'steps', back });
+  },
+  howtoTab(el) { ui.sheet.tab = el.dataset.v; renderSheet(); },
+  howtoSym(el) { ui.sheet.sym = ui.sheet.sym === el.dataset.v ? null : el.dataset.v; renderSheet(); },
+  howtoNote() {
+    const { exId, sym } = ui.sheet;
+    const fix = howTo(exercise(exId))?.fixes[sym];
+    if (!fix) return;
+    const old = exSetting(exId, 'note');
+    if (!(old || '').includes(fix)) setExSetting(exId, 'note', old ? `${old} · ${fix}` : fix);
+    toast('Saved: it shows on this lift every workout');
+    render();
+  },
+  howtoHurt() {
+    const ei = state.activeWorkout?.exercises.findIndex(e => e.exId === ui.sheet.exId);
+    if (ei == null || ei < 0) return;
+    openSheet({ type: 'hurt', ei });
+  },
+  howtoBack() { const b = ui.sheet.back; if (b) openSheet(b); else closeSheet(); },
   installDone() { state.settings.installSeen = new Date().toISOString(); save(); closeSheet(); nextBootSheet(); },
   exportCsv() { exportCsvFile(); },
 
