@@ -27,10 +27,15 @@ npm test
 - `js/library.js` – every exercise as movement × equipment version (plate-loaded, pin/dial, Smith, cable…)
 - `js/search.js` – exercise search with filters and synonyms
 - `js/merge.js` – matching a custom exercise to the library (moves its history)
+- `js/together.js` – Train together: a workout shared as a link
 - `js/data.js` – muscles, regions, day types; builds the exercise list from the library
 - `js/store.js` – data saved in `localStorage`
 - `js/app.js` – UI
 - `sw.js` – offline cache
+
+## Science
+
+`docs/science.md` lists every rule used to build workouts and plans, its evidence, and the test that checks it.
 
 ## Shipping updates
 

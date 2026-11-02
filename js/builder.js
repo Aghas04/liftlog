@@ -7,8 +7,14 @@
 // 3. Give every chosen muscle at least 4 sets, then share the rest by need.
 // 4. Every muscle gets at least 2 different exercises aimed at different
 //    regions, 2-4 sets each, adding up exactly to the budget.
-// 5. Order: compound lifts first, then by muscle priority.
+// 5. Order: big compound lifts first, then other compounds, then isolation
+//    lifts alternating between muscles (planner.orderExercises).
+//
+// Limits from the research: at most PER_SESSION_CAP hard sets per muscle in
+// one workout (more adds little), and small muscles get credit for the
+// indirect work they do in bigger lifts (rows train biceps, presses triceps).
 import { REGIONS, MUSCLES, regionsOf, exerciseRegions, primaryRegion } from './data.js';
+import { orderExercises, PER_SESSION_CAP } from './planner.js';
 import { workingSets } from './engine.js';
 import { regionSets, regionTargets, neglectedRegions, DIRECT } from './insights.js';
 
@@ -16,6 +22,9 @@ const DAY = 86400000;
 export const MIN_SETS_PER_MUSCLE = 4;
 export const MIN_SETS_PER_EXERCISE = 2;
 export const MAX_SETS_PER_EXERCISE = 4;
+// Helper muscles that bigger lifts already train indirectly (about half a set per set).
+const HELPS = { biceps: ['back'], triceps: ['chest', 'shoulders'], forearms: ['back', 'biceps'] };
+const INDIRECT_CREDIT = 0.35;
 
 /** Seconds per working set from recent workouts, or rest + 40s of work. */
 export function paceFromHistory(workouts, defaultRest = 90) {
@@ -101,8 +110,9 @@ export function buildWorkout(input) {
 
   const pool = exercises.filter(ex => !exclude.includes(ex.id));
   const byMuscle = m => pool.filter(ex => ex.muscle === m);
-  // Most sets a muscle can take: every exercise at the 4-set maximum.
-  const capOf = m => byMuscle(m).length * MAX_SETS_PER_EXERCISE;
+  // Most sets a muscle can take in one workout: the per-session limit, or
+  // every exercise at the 4-set maximum if there are few exercises.
+  const capOf = m => Math.min(PER_SESSION_CAP, byMuscle(m).length * MAX_SETS_PER_EXERCISE);
   const muscleNeed = m => regionsOf(m).reduce((s, r) => s + need[r], 0);
   const score = m => (muscleNeed(m) + 0.5) * readiness[m] + jitter() * 0.8;
   const available = Object.keys(MUSCLES).filter(m => byMuscle(m).length >= 2 && regionsOf(m).some(r => !ignoredSet.has(r)));
@@ -158,6 +168,26 @@ export function buildWorkout(input) {
     left -= given;
   }
 
+  // Small muscles trained alongside their bigger helpers (biceps with back,
+  // triceps with chest) already get indirect work: give them fewer direct
+  // sets and move the difference to muscles that can use it.
+  let moved = 0;
+  for (const m of chosen) {
+    const helpers = (HELPS[m] || []).filter(h => chosen.includes(h));
+    if (!helpers.length) continue;
+    const credit = Math.round(helpers.reduce((s, h) => s + alloc[h], 0) * INDIRECT_CREDIT);
+    const cut = Math.max(0, Math.min(credit, alloc[m] - MIN_SETS_PER_MUSCLE));
+    alloc[m] -= cut;
+    moved += cut;
+  }
+  while (moved > 0) {
+    const open = chosen.filter(m => alloc[m] < capOf(m) && !(HELPS[m] || []).some(h => chosen.includes(h)));
+    if (!open.length) break;
+    open.sort((a, b) => muscleNeed(b) - muscleNeed(a));
+    alloc[open[0]]++;
+    moved--;
+  }
+
   // 4. Exercises per muscle.
   const items = [];
   const lastIds = new Set((workouts[workouts.length - 1]?.exercises || []).map(e => e.exId));
@@ -178,7 +208,7 @@ export function buildWorkout(input) {
         for (const r of regionsOf(m)) s += (regs[r] || 0) * ((remaining[r] || 0) + 0.5);
         if (usage[ex.id]) s += 3 + Math.min(usage[ex.id], 10) * 0.2; // familiar lifts have accurate suggestions
         if (j === 0 && ex.compound) s += 1;
-        if (usedRegions.has(main)) s -= 7;                            // aim the next lift at a different region
+        if (usedRegions.has(main)) s -= 50;                           // different parts of a muscle grow with different lifts
         if (lastIds.has(ex.id)) s -= 0.75;                            // a little variety from last time
         if (neglectBy[main]) s += 1.5;
         s += jitter() * 1.5;
@@ -204,12 +234,16 @@ export function buildWorkout(input) {
     });
   }
 
-  // 5. Order: compounds first, then by muscle priority, keeping each muscle's pick order.
-  items.sort((a, b) => (b.compound - a.compound) || (a.rank - b.rank) || (a.order - b.order));
+  // 5. Order (see orderExercises): muscles in need order, each muscle's picks in pick order.
+  items.sort((a, b) => (a.rank - b.rank) || (a.order - b.order));
+  const ordered = orderExercises(items);
+  const totalSets = ordered.reduce((s, i) => s + i.sets, 0);
   return {
-    items: items.map(({ exId, sets, muscle, region, reason, isNew }) => ({ exId, sets, muscle, region, reason, isNew })),
+    items: ordered.map(({ exId, sets, muscle, region, reason, isNew, compound }) => ({ exId, sets, muscle, region, reason, isNew, compound })),
     muscles: chosen,
-    totalSets: items.reduce((s, i) => s + i.sets, 0),
+    totalSets,
+    // Fewer sets than asked: each muscle is at the useful per-session limit.
+    ...(totalSets < budget ? { capped: true } : {}),
   };
 }
 

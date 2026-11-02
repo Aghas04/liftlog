@@ -2,6 +2,7 @@
 import { EXERCISES, EQUIPMENT, DAY_TYPES, MUSCLES, CUSTOM_SPLIT } from './data.js';
 import { PLAN_DAYS } from './planner.js';
 import { isKg, defaultStepLb, stepChoices } from './units.js';
+import { restSeconds } from './engine.js';
 
 const KEY = 'liftlog.v1';
 
@@ -101,8 +102,10 @@ export function setExSetting(exId, key, value) {
   save();
 }
 
+// Rest before the next set (engine.restSeconds has the rules and evidence).
 export function restFor(exId) {
-  return state.exerciseSettings[exId]?.rest ?? state.settings.defaultRest;
+  const zone = state.activeWorkout?.exercises.find(e => e.exId === exId)?.zone;
+  return restSeconds(exercise(exId), { own: state.exerciseSettings[exId]?.rest, base: state.settings.defaultRest, zone });
 }
 
 // Latest bodyweight on or before a date (ISO string), or null.

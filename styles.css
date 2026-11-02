@@ -820,3 +820,54 @@ label.btn { cursor: pointer; }
 .dc-open { font-size: 12px; font-weight: 800; color: var(--muted); flex: none; }
 .feel.compact { margin-top: 8px; padding-top: 0; border: 0; }
 .feel.compact .seg button { min-height: 28px; font-size: 12px; }
+
+/* ---------- Focus mode (full screen) ---------- */
+.wh-btns { display: flex; gap: 8px; flex: none; }
+.focus-btn { padding: 0 12px; height: 40px; border-radius: 99px; background: var(--surface-2); font-weight: 800; font-size: 13px; }
+#timer .tmini { flex: 0 0 36px !important; }
+#focus { position: fixed; inset: 0; z-index: 28; background: radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--c) 14%, var(--bg)), var(--bg) 60%);
+  display: flex; flex-direction: column; padding: calc(var(--safe-t) + 14px) 18px calc(var(--safe-b) + 18px); overflow-y: auto; animation: fade 0.2s; }
+.fx-top { display: flex; align-items: center; gap: 12px; }
+.fx-top > div { flex: 1; min-width: 0; }
+.fx-top b { display: block; font-size: 17px; font-weight: 900; }
+.fx-top small { display: block; font-size: 12px; color: var(--muted); }
+.fx-top button { width: 40px; height: 40px; border-radius: 50%; background: var(--surface-2); font-size: 16px; }
+.fx-prog { height: 4px; border-radius: 2px; background: var(--surface-2); margin: 12px 0 0; overflow: hidden; }
+.fx-prog i { display: block; height: 100%; background: var(--c); transition: width 0.4s; }
+/* set entry */
+.fx-set { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px; max-width: 460px; width: 100%; margin: 0 auto; padding-top: 10px; }
+.fx-go { align-self: center; font-weight: 900; font-size: 15px; padding: 6px 14px; border-radius: 99px; background: var(--accent); color: var(--accent-ink); animation: pulse 1s ease-in-out infinite; }
+.fx-ex { text-align: center; }
+.fx-ex .tag { justify-content: center; --c: var(--accent); }
+.fx-ex h2 { font-size: 30px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1; margin: 4px 0 6px; }
+.fx-ex small { display: block; font-size: 15px; color: var(--text); opacity: 0.85; }
+.fx-ex .fx-last { font-size: 13px; color: var(--muted); margin-top: 4px; opacity: 1; }
+.fx-field > span { display: block; text-align: center; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
+.fx-stepper { display: grid; grid-template-columns: 72px 1fr 72px; gap: 10px; }
+.fx-stepper button { height: 72px; border-radius: 20px; background: var(--surface-2); font-size: 32px; font-weight: 700; }
+.fx-stepper button:active { background: var(--line); }
+.fx-stepper input { height: 72px; border-radius: 20px; border: 1px solid var(--line); background: var(--surface); text-align: center; font-size: 38px; font-weight: 900; color: var(--text); width: 100%; font-variant-numeric: tabular-nums; }
+.fx-done-btn { height: 76px; border-radius: 24px; background: var(--accent); color: var(--accent-ink); font-size: 24px; font-weight: 900; display: flex; align-items: center; justify-content: center; gap: 10px; box-shadow: 0 14px 40px -12px var(--accent); }
+.fx-done-btn svg { width: 28px; height: 28px; }
+.fx-done-btn:active { transform: scale(0.98); }
+.fx-more { display: flex; justify-content: center; gap: 18px; }
+.fx-more button { font-size: 13px; font-weight: 700; color: var(--muted); padding: 6px; }
+/* full-screen rest */
+.fx-rest { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
+.fx-ring { position: relative; width: min(78vw, 340px); aspect-ratio: 1; display: grid; place-items: center; }
+.fx-ring svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.fx-ring circle { fill: none; stroke-width: 6; }
+.fx-ring .track { stroke: rgba(255, 255, 255, 0.07); }
+.fx-ring .fill { stroke: var(--tc, #3ed4ff); stroke-linecap: round; transition: stroke-dasharray 0.5s linear, stroke 0.5s; filter: drop-shadow(0 0 10px var(--tc, #3ed4ff)); }
+.fx-time { font-size: clamp(64px, 20vw, 96px); font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; color: var(--tc, var(--text)); transition: color 0.5s; }
+.fx-lbl { position: absolute; bottom: 24%; font-size: 14px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+#focus.soon .fx-ring { animation: pulse 1s ease-in-out infinite; }
+.fx-next { text-align: center; font-size: 15px; color: var(--text); opacity: 0.85; max-width: 340px; line-height: 1.4; }
+.fx-btns { display: flex; gap: 10px; width: 100%; max-width: 380px; }
+.fx-btns button { flex: 1; height: 54px; border-radius: 16px; background: var(--surface-2); font-weight: 800; font-size: 15px; }
+.fx-btns button.primary { background: var(--accent); color: var(--accent-ink); }
+.fx-done { flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: center; gap: 12px; max-width: 420px; margin: 0 auto; width: 100%; }
+.join-list { display: grid; gap: 6px; margin-bottom: 12px; }
+.join-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); }
+.join-row b { font-size: 14px; }
+.join-row small { color: var(--muted); font-size: 12px; flex: none; }

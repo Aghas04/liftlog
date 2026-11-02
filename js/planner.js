@@ -54,6 +54,39 @@ export const LEVELS = {
 const SIZE_FACTOR = { forearms: 0.5, adductors: 0.5, calves: 0.8, abs: 0.8 };
 
 export const splitById = id => SPLITS.find(s => s.id === id);
+
+/**
+ * Exercise order for a session. items: [{ muscle, compound, ... }] in
+ * priority order (most important first). Evidence-based rules:
+ * 1. Multi-joint lifts for big muscles first, priority muscles first among
+ *    them: what's done first improves most (Simão 2012; Nunes 2021).
+ * 2. Other compound lifts next, before any isolation work, so small helper
+ *    muscles (biceps, triceps) aren't tired before the big lifts that need them.
+ * 3. Isolation lifts alternate between muscles instead of stacking one muscle
+ *    back to back, so each muscle recovers a little between its lifts.
+ * Returns a new array.
+ */
+export function orderExercises(items, priority = []) {
+  const pri = m => (priority.includes(m) ? 0 : 1);
+  const rankOf = new Map();
+  items.forEach((it, i) => { if (!rankOf.has(it.muscle)) rankOf.set(it.muscle, i); });
+  const byRank = (a, b) => pri(a.muscle) - pri(b.muscle) || rankOf.get(a.muscle) - rankOf.get(b.muscle);
+  const big = items.filter(it => it.compound && MAJOR.includes(it.muscle)).sort(byRank);
+  const otherCompound = items.filter(it => it.compound && !MAJOR.includes(it.muscle)).sort(byRank);
+  const iso = items.filter(it => !it.compound);
+  // Round-robin the isolation lifts by muscle, never the same muscle twice in a row if avoidable.
+  const queues = new Map();
+  for (const it of [...iso].sort(byRank)) { if (!queues.has(it.muscle)) queues.set(it.muscle, []); queues.get(it.muscle).push(it); }
+  const out = [...big, ...otherCompound];
+  let last = out.at(-1)?.muscle;
+  while ([...queues.values()].some(q => q.length)) {
+    const order = [...queues.keys()].filter(m => queues.get(m).length);
+    const pick = order.find(m => m !== last) || order[0];
+    out.push(queues.get(pick).shift());
+    last = pick;
+  }
+  return out;
+}
 export const slotLetter = i => String.fromCharCode(65 + i);
 
 function rng(seed) {
@@ -317,8 +350,9 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
     list.slice(0, k).forEach((id, j) => items.push({ exId: id, muscle: m, sets: per[j], core: j === 0, compound: !!lookup(id).compound }));
   }
   const pri = profile.priority || [];
-  const rank = it => (it.core && it.compound && MAJOR.includes(it.muscle) ? 0 : 2) + (it.compound ? 0 : 1) - (pri.includes(it.muscle) ? 0.5 : 0);
-  items.sort((a, b) => rank(a) - rank(b));
+  // Core compound of each big muscle leads its muscle's lifts, then the shared order rules.
+  items.sort((a, b) => (b.core && b.compound) - (a.core && a.compound));
+  items.splice(0, items.length, ...orderExercises(items, pri));
   // Strength goal: the first compound core lift of the top 2 major muscles is a main lift (3-6 reps).
   if (profile.goal === 'strength') {
     let n = 0;

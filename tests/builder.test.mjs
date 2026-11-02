@@ -140,7 +140,7 @@ test('stress: 1000 random histories and budgets always produce valid workouts', 
   let rand = 12345;
   const next = () => ((rand = (rand * 1103515245 + 12345) % 2147483648) / 2147483648);
   const muscles = Object.keys(MUSCLES);
-  let exact = 0, runs = 0;
+  let exact = 0, runs = 0, autoRuns = 0, autoExact = 0;
   for (let i = 0; i < 1000; i++) {
     const ws = [];
     for (let d = 28; d >= 1; d -= 1 + Math.floor(next() * 4)) {
@@ -157,15 +157,24 @@ test('stress: 1000 random histories and budgets always produce valid workouts', 
     if (plan.error) { assert.ok(pick, `auto mode errored: ${plan.error}`); continue; }
     checkPlan(plan, budget, `run ${i} (budget ${budget})`);
     runs++;
+    if (!(pick && chosen.length)) { autoRuns++; if (plan.totalSets === budget) autoExact++; }
     if (plan.totalSets === budget) exact++;
     else {
-      // Only allowed when the picked muscles have run out of exercises.
-      assert.ok(pick, `auto run ${i}: ${plan.totalSets}/${budget} sets`);
-      const cap = plan.muscles.reduce((s, m) => s + EXERCISES.filter(e => e.muscle === m).length * 4, 0);
-      assert.equal(plan.totalSets, cap, `pick run ${i}: short of budget but not at the exercise cap`);
+      // Only allowed when every muscle that can take more is at its per-session limit
+      // (10 sets, or all its exercises at 4 sets); helper muscles may sit lower.
+      assert.ok(plan.capped, `run ${i}: short of budget without saying so`);
+      const per = {}; for (const it of plan.items) per[it.muscle] = (per[it.muscle] || 0) + it.sets;
+      const helps = { biceps: ['back'], triceps: ['chest', 'shoulders'], forearms: ['back', 'biceps'] };
+      for (const m of plan.muscles) {
+        if ((helps[m] || []).some(h => plan.muscles.includes(h))) continue;
+        const cap = Math.min(10, EXERCISES.filter(e => e.muscle === m).length * 4);
+        assert.equal(per[m], cap, `run ${i}: ${m} has room (${per[m]}/${cap}) but the workout is short`);
+      }
     }
   }
-  assert.ok(exact / runs > 0.9, `only ${exact}/${runs} hit the budget exactly`);
+  // Auto picks enough muscles to use the whole budget; Pick mode can stop at
+  // the per-session limit when only a muscle or two is chosen.
+  assert.ok(autoExact / autoRuns > 0.97, `auto: only ${autoExact}/${autoRuns} hit the budget exactly`);
 });
 
 test('a lifter following built workouts for 8 weeks ends up with balanced regions', () => {

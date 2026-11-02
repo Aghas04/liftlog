@@ -452,3 +452,16 @@ export function swapWeight(fromEx, toEx, weight, inc) {
   if (!f || !(weight > 0)) return null;
   return Math.max(inc, Math.round((weight * f) / inc) * inc);
 }
+
+/**
+ * Rest before the next set, in seconds. Your own setting for a lift wins.
+ * Otherwise heavy multi-joint lifts rest longer than isolation work: longer
+ * rests keep reps up on the next set and build more muscle and strength
+ * (Schoenfeld 2016; Singer 2024). Strength-range sets (3-6 reps) get 3 minutes.
+ */
+export function restSeconds(ex, { own = null, base = 90, zone = null } = {}) {
+  if (own != null) return own;
+  if (zone && zone[1] <= 6) return Math.max(base, 180);
+  if (ex.compound && !usesBodyweight(ex)) return Math.max(base, 120);
+  return base;
+}
