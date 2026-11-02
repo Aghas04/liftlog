@@ -75,6 +75,10 @@ of the research below measures.
 | After a break of 2+ weeks, the first week has ~30% less volume and weights drop ~10% | Strength holds for ~3 weeks then fades; easing back avoids soreness and injury | Bosquet et al. 2013 (detraining); practical | Moderate | `plancontrol.test` breaks |
 | Rough day (2 of: poor sleep, very sore, low energy): one set off accessories | Poor sleep and fatigue reduce performance | Knowles et al. 2018 | Moderate | `planner.test` readiness |
 
+## Form tips
+
+The How to sheet and form cues are checked separately: see [form-sources.md](form-sources.md).
+
 ## What the app does not claim
 
 - Exact set numbers are averages; the block review adjusts them to you.

@@ -2528,9 +2528,11 @@ function sheetHtml() {
         const tips = tipsFor(ex);
         body = `<div class="howto-block"><div class="works-head">Setup</div><ul>${h.setup.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
           <div class="howto-block"><div class="works-head">How to do it</div><ol>${h.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></div>
-          <div class="howto-block"><div class="works-head">Breathing</div><p>${esc(h.breath)}</p></div>
+          <div class="howto-block"><div class="works-head">Breathing</div><p>${esc(h.breath)}</p>${h.breathSource ? `<p class="muted small">${esc(h.breathSource)}</p>` : ''}</div>
           ${tips.length ? `<div class="howto-block"><div class="works-head">Key cues</div><ul>${tips.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
-          <div class="howto-block"><div class="works-head">Common mistakes</div>${h.mistakes.map(([m, fx]) => `<div class="mistake"><span class="bad">✗ ${esc(m)}</span><span class="good">✓ ${esc(fx)}</span></div>`).join('')}</div>`;
+          <div class="howto-block"><div class="works-head">Common mistakes</div>${h.mistakes.map(([m, fx]) => `<div class="mistake"><span class="bad">✗ ${esc(m)}</span><span class="good">✓ ${esc(fx)}</span></div>`).join('')}</div>
+          ${h.research.length ? `<div class="howto-block"><div class="works-head">What studies show</div><ul>${h.research.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+          <p class="muted small">Other cues here are standard coaching technique: widely taught, but not each tested in studies. Not medical advice.</p>`;
       } else if (tab === 'fix') {
         const sym = s.sym;
         body = `<p class="muted small">What's going on? Tap one for a fix for this lift.</p>

@@ -3,7 +3,7 @@
 export const TIPS = {
   // Chest
   flat_press: ['Shoulder blades pulled back and down, slight arch, feet planted.', 'Lower to mid-chest with elbows about 45° from your body, not flared straight out.', 'Press up and slightly back; keep wrists stacked over elbows.'],
-  incline_press: ['Bench at about 30°: steeper turns it into a shoulder press.', 'Lower to the upper chest, just under the collarbone.', 'Keep shoulder blades pinned; don\'t let the shoulders roll forward at the top.'],
+  incline_press: ['Bench at about 30-45°: much steeper turns it into a shoulder press.', 'Lower to the upper chest, just under the collarbone.', 'Keep shoulder blades pinned; don\'t let the shoulders roll forward at the top.'],
   decline_press: ['Lock your legs in before you unrack.', 'Lower to the bottom of the chest under control.', 'Use a spotter or safeties on barbell versions.'],
   chest_fly: ['Soft, fixed bend in the elbows the whole time.', 'Open until you feel a stretch across the chest, not in the front of the shoulder.', 'Bring the hands together by squeezing the chest, like hugging a barrel.'],
   incline_fly: ['Hands travel from low to high, finishing around chin height.', 'Keep elbows slightly bent and chest up.', 'Squeeze at the top for a second.'],
@@ -41,16 +41,16 @@ export const TIPS = {
   // Shoulders
   overhead_press: ['Squeeze glutes and brace so your lower back doesn\'t arch.', 'Press straight up, moving your head back then through once the bar passes it.', 'Lock out with the bar over your mid-foot.'],
   arnold_press: ['Start palms facing you at chin height.', 'Rotate palms forward as you press up.', 'Reverse the rotation on the way down.'],
-  lateral_raise: ['Raise out to the sides, leading with the elbows.', 'Stop around shoulder height; slight forward lean helps.', 'Go lighter than you think and control the lowering.'],
-  upright_row: ['Wide grip is easier on the shoulders.', 'Lift to about chest height, elbows leading.', 'Stop if you feel pinching in the shoulder.'],
+  lateral_raise: ['Raise out to the sides, leading with the elbows.', 'Stop around shoulder height, hands slightly in front of you with thumbs level or up: easier on the shoulders.', 'Use a weight you can raise without swinging, and lower it under control.'],
+  upright_row: ['Wide grip is easier on the shoulders.', 'Lift until the elbows reach about shoulder height, no higher.', 'Stop if you feel pinching in the shoulder.'],
   front_raise: ['Raise to shoulder height in front of you.', 'Keep a slight bend in the elbows.', 'No swinging.'],
   rear_delt: ['Arms out wide with a slight bend.', 'Move from the shoulders; don\'t squeeze the shoulder blades together hard.', 'Light weight, high control.'],
   face_pull: ['Rope at face height, pull toward your forehead.', 'Elbows high, finish with hands beside your ears.', 'Pause and squeeze the rear delts.'],
   // Quads
-  squat: ['Brace hard before each rep: big breath, tight core.', 'Knees track over the toes; sit down between your hips.', 'Go as deep as you can with a neutral back.'],
+  squat: ['Brace before each rep: breathe in, tighten your core, breathe out as you pass the hardest part.', 'Knees track over the toes; sit down between your hips.', 'Go as deep as you can with a neutral back.'],
   front_squat: ['Elbows high so the bar sits on your shoulders.', 'Stay upright and sit straight down.', 'Drive up through the whole foot.'],
   goblet_squat: ['Hold the weight at your chest, elbows inside the knees at the bottom.', 'Sit down between your heels, chest up.', 'Great for learning squat depth.'],
-  leg_press: ['Lower back stays flat on the pad.', 'Lower as deep as you can without your hips lifting off the seat.', 'Don\'t lock the knees hard at the top.'],
+  leg_press: ['Lower back stays flat on the pad.', 'Lower as deep as you can without your hips lifting; don\'t lock the knees hard at the top.', 'Breathe out on each push; don\'t hold your breath for several reps.'],
   hack_squat: ['Back flat against the pad, feet about shoulder width.', 'Lower deep under control.', 'Push through mid-foot.'],
   pendulum_squat: ['Feet mid-platform; let the knees travel forward.', 'Go deep: the machine is built for it.', 'Smooth reps, no bouncing.'],
   v_squat: ['Shoulders under the pads, feet shoulder width.', 'Sit back and down to full depth.', 'Drive up without locking out hard.'],
@@ -65,7 +65,7 @@ export const TIPS = {
   deadlift: ['Bar over mid-foot, shins close.', 'Brace and push the floor away, keeping the bar against your legs.', 'Stand tall at the top; don\'t lean back.'],
   good_morning: ['Bar on the upper back, soft knees.', 'Hinge at the hips with a flat back.', 'Start light: this one is very demanding.'],
   lying_leg_curl: ['Hips pressed into the pad.', 'Curl all the way up, then lower slowly.', 'Don\'t let the hips rise.'],
-  seated_leg_curl: ['Thigh pad snug so you stay still.', 'Full range: straight leg to full curl.', 'Slow lowering; seated curls grow hamstrings well.'],
+  seated_leg_curl: ['Thigh pad snug so you stay still.', 'Full range: straight leg to full curl.', 'Slow lowering; seated curls grew the hamstrings more than lying curls in a study.'],
   standing_leg_curl: ['Stand tall, hips still.', 'Curl the heel toward your glutes.', 'Control the return.'],
   nordic_curl: ['Knees padded, ankles anchored.', 'Lower as slowly as you can, using your hands to catch yourself.', 'Advanced: start with small ranges.'],
   // Glutes
@@ -76,7 +76,7 @@ export const TIPS = {
   reverse_hyper: ['Hips on the edge of the pad, legs hanging.', 'Raise the legs with the glutes until level with the body.', 'Don\'t swing.'],
   pull_through: ['Face away from the cable, rope between your legs.', 'Hinge back, then drive the hips forward.', 'Squeeze the glutes at the top.'],
   // Calves
-  standing_calf_raise: ['Full stretch at the bottom, pause for a second.', 'Rise as high as you can onto the big toe.', 'No bouncing: slow, full reps grow calves.'],
+  standing_calf_raise: ['Full stretch at the bottom, pause for a second.', 'Rise as high as you can onto the big toe.', 'No bouncing: spend time in the deep stretch at the bottom, which helps calves grow.'],
   seated_calf_raise: ['Knees bent works the soleus.', 'Deep stretch at the bottom, pause.', 'Squeeze at the top.'],
   // Abs
   crunch: ['Curl the ribs toward the hips; don\'t pull on your neck.', 'Exhale as you crunch.', 'Slow on the way back.'],
@@ -85,7 +85,7 @@ export const TIPS = {
   ab_wheel: ['Start from the knees.', 'Keep a slight hollow (no sagging lower back).', 'Roll out only as far as you can come back with a flat back.'],
   oblique: ['Rotate from the torso, hips steady.', 'Move with control; the obliques do the work, not momentum.', 'Equal reps each side.'],
   russian_twist: ['Lean back about 45° with a straight back.', 'Rotate the shoulders, not just the arms.', 'Feet down is easier; lift them to make it harder.'],
-  bicycle_crunch: ['Lower back pressed into the floor.', 'Bring elbow toward the opposite knee by rotating the ribs.', 'Slow and controlled beats fast.'],
+  bicycle_crunch: ['Lower back pressed into the floor.', 'Bring elbow toward the opposite knee by rotating the ribs.', 'Controlled reps keep the work on the abs, not momentum.'],
   reverse_crunch: ['Curl the hips off the floor toward your chest.', 'Don\'t swing the legs for momentum.', 'Lower slowly.'],
   v_up: ['Reach hands toward feet at the same time.', 'Keep legs as straight as you can.', 'Lower without letting the lower back arch.'],
   dead_bug: ['Lower back flat on the floor the whole time.', 'Extend the opposite arm and leg slowly.', 'Exhale as you reach.'],
@@ -101,7 +101,7 @@ export const TIPS = {
   // Timed holds
   plank: ['Elbows under shoulders, body in one straight line.', 'Squeeze glutes and brace like you\'re about to be poked in the stomach.', 'Stop when your hips start to sag.'],
   side_plank: ['Elbow under the shoulder, hips up in a straight line.', 'Don\'t let the hips drop or rotate.', 'Equal time each side.'],
-  dead_hang: ['Full grip, shoulders gently engaged (not shrugged).', 'Relax the legs; breathe.', 'Great for grip and shoulder health.'],
+  dead_hang: ['Full grip, shoulders gently engaged (not shrugged).', 'Relax the legs; breathe.', 'Builds grip strength: add a few seconds each session.'],
   hollow_hold: ['Lower back pressed into the floor.', 'Arms and legs reach long, low enough that the back stays flat.', 'Bend the knees to make it easier.'],
   wall_sit: ['Back flat on the wall, thighs parallel to the floor.', 'Knees over the ankles.', 'Breathe; stop if your knees hurt.'],
   l_sit: ['Hands by your hips, press down to lift.', 'Legs straight out in front.', 'Tuck the knees to make it easier.'],

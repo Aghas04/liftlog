@@ -15,7 +15,7 @@ export const SYMPTOMS = [
 export const PAIN_SYMPTOMS = new Set(['shoulder', 'knees', 'lowerBack']);
 
 const BREATH = {
-  heavy: 'Big breath into your belly and brace before each rep, hold it through the hard part, breathe out at the top.',
+  heavy: 'Breathe in as you lower, out as you push through the hardest part. On heavy sets (about 5 reps or fewer) you can take a big breath and brace for one rep, then breathe out. High blood pressure or a heart condition: never hold your breath.',
   normal: 'Breathe in on the easy (lowering) part, out as you push or pull.',
   hold: 'Breathe slowly and steadily the whole time; don\'t hold your breath.',
   core: 'Breathe out as you crunch or curl in, in as you return.',
@@ -91,7 +91,7 @@ const PATTERNS = {
     lowerBack: 'Brace hard before each rep and stop just before your lower back rounds at the bottom. A slightly wider stance or elevated heels can help you stay upright.',
     shoulder: 'Bar on the upper back with a wider grip, or use a front squat, goblet squat or machine.',
     knees: 'Push the knees out in line with the toes, keep weight across the whole foot, and control the bottom. Mild knee travel past the toes is normal; sharp pain is not.',
-    notFeeling: 'Go deeper (as deep as you can with good form): most quad and glute growth comes from the bottom half.',
+    notFeeling: 'Go deeper (as deep as you can with good form): in a study, deep squats grew the glutes and inner thighs about three times more than half squats. Quads grew about the same either way.',
     grip: 'Not a grip exercise; for dumbbell versions, use straps or switch to a goblet hold.',
     range: 'Elevate the heels on small plates, widen the stance a little, and turn toes out slightly. Ankle mobility usually limits depth.',
   }],
@@ -123,7 +123,7 @@ const PATTERNS = {
     lowerBack: 'Keep the hips pressed into the pad and don\'t let the lower back arch as you curl.',
     shoulder: 'Not a shoulder exercise.',
     knees: 'Line the knee up with the machine\'s pivot and avoid jerking at the start.',
-    notFeeling: 'Point the toes up toward your shins and lower slowly; seated curls give the best stretch.',
+    notFeeling: 'Lower slowly through the full range. Seated curls stretch the hamstrings more and grew them more than lying curls in a study.',
     grip: 'Hold the handles to stay planted.',
     range: 'Adjust the pad so you can go from straight legs to a full curl.',
   }],
@@ -187,7 +187,7 @@ const PATTERNS = {
     lowerBack: 'No swinging: lighter weight, slight forward lean, or a seated version.',
     shoulder: 'Raise only to shoulder height, slightly in front of your body (not straight to the sides), thumbs level or slightly up.',
     knees: 'Soft knees or sit down.',
-    notFeeling: 'Lead with the elbows, raise slowly, pause at the top. Lighter weight usually works the delts better here.',
+    notFeeling: 'Lead with the elbows, raise with control, pause at the top. A weight you can control works the delts better than one you have to swing.',
     grip: 'Hold the weight loosely; the hands just hold on.',
     range: 'Raise to about shoulder height and lower until the arms are at your sides. Cables keep tension at the bottom.',
   }],
@@ -265,9 +265,9 @@ export const HOWTO = {
   flat_press: M('press_h', ['Lie with eyes under the bar (or handles at mid-chest on a machine).', 'Pull shoulder blades back and down, feet flat.'],
     ['Unrack with straight arms over the shoulders.', 'Lower under control to mid-chest, elbows about 45° from your body.', 'Press up and slightly back to straight arms.'],
     [['Elbows flared to 90°', 'Tuck them to about 45°.'], ['Bouncing off the chest', 'Touch lightly, or stop an inch above.'], ['Hips lifting off the bench', 'Keep glutes down; less arch.']]),
-  incline_press: M('press_h', ['Set the bench to about 30°.', 'Shoulder blades back and down, feet planted.'],
+  incline_press: M('press_h', ['Set the bench to about 30-45°.', 'Shoulder blades back and down, feet planted.'],
     ['Lower to the upper chest, just below the collarbone.', 'Press up over the shoulders.', 'Keep the shoulders pinned back at the top.'],
-    [['Bench too steep (45°+)', 'Use 30°; steeper turns it into a shoulder press.'], ['Lowering to the neck', 'Aim at the upper chest.']]),
+    [['Bench too steep (well past 45°)', 'Use 30-45°; steeper turns it into a shoulder press.'], ['Lowering to the neck', 'Aim at the upper chest.']]),
   decline_press: M('press_h', ['Lock your legs under the pads.', 'Shoulder blades back; have a spotter or safeties for barbells.'],
     ['Lower to the bottom of the chest.', 'Press straight up over the chest.', 'Control every rep; don\'t bounce.'],
     [['No spotter on a barbell decline', 'Use safeties, a spotter, or dumbbells.'], ['Lowering to mid-chest', 'Touch lower, near the bottom of the chest.']]),
@@ -378,9 +378,9 @@ export const HOWTO = {
     ['Raise out to the sides, leading with the elbows.', 'Stop around shoulder height.', 'Lower slowly.'],
     [['Swinging the weight up', 'Go lighter; control matters more than weight here.'], ['Shrugging', 'Keep shoulders down.']]),
   upright_row: M('raise', ['Wide grip on the bar or cable.', 'Stand tall.'],
-    ['Pull up to about chest height, elbows leading.', 'Pause.', 'Lower slowly.'],
-    [['Narrow grip and pulling to the chin', 'Wider grip and stop at chest height.']],
-    { shoulder: 'Use a wide grip and stop at chest height; if it still pinches, swap for lateral raises.' }),
+    ['Pull up, elbows leading, until the elbows reach about shoulder height.', 'Pause.', 'Lower slowly.'],
+    [['Narrow grip and pulling to the chin', 'Wider grip; elbows no higher than the shoulders.']],
+    { shoulder: 'Use a wide grip and stop with the elbows at shoulder height; if it still pinches, swap for lateral raises.' }),
   front_raise: M('raise', ['Weights in front of the thighs.', 'Soft elbows.'],
     ['Raise to shoulder height in front of you.', 'Pause.', 'Lower slowly.'],
     [['Swinging', 'Lighter weight, no body movement.']]),
@@ -402,7 +402,7 @@ export const HOWTO = {
     [['Leaning forward', 'Hold the weight closer and keep the chest up.']]),
   leg_press: M('machine_squat', ['Back and hips flat on the pad.', 'Feet shoulder width, mid-platform.'],
     ['Lower the platform as deep as you can without the hips lifting.', 'Knees track over the toes.', 'Press up without locking the knees hard.'],
-    [['Hips curling off the seat', 'Stop just before that point.'], ['Locking the knees hard', 'Stop just short of lockout.']]),
+    [['Hips curling off the seat', 'Stop just before that point.'], ['Locking the knees hard', 'Stop just short of lockout.'], ['Holding your breath for the whole set', 'Breathe out on each push: this lift raises blood pressure more than most.']]),
   hack_squat: M('machine_squat', ['Back flat on the pad, shoulders under the pads.', 'Feet shoulder width.'],
     ['Lower deep under control.', 'Push through mid-foot.', 'Stop just short of lockout.'],
     [['Bouncing at the bottom', 'Control the turnaround.']]),
@@ -498,10 +498,11 @@ export const HOWTO = {
     [['Using momentum', 'Slow and controlled.']]),
   russian_twist: M('core_rot', ['Sit, lean back about 45° with a straight back.', 'Feet on the floor (easier) or lifted.'],
     ['Rotate the shoulders to one side.', 'Then the other.', 'Keep the back straight.'],
-    [['Just moving the arms', 'Rotate the whole upper body.']]),
+    [['Just moving the arms', 'Rotate the whole upper body.']],
+    { lowerBack: 'Keep the back straight and rotate through the ribs. If your back is sensitive, a cable rotation or an anti-rotation hold is gentler on the spine.' }),
   bicycle_crunch: M('core_flex', ['Lie on your back, hands at temples, legs raised.', 'Lower back pressed down.'],
     ['Bring an elbow toward the opposite knee as the other leg extends.', 'Switch sides.', 'Slow and controlled.'],
-    [['Going fast', 'Slower reps work the abs more.']]),
+    [['Rushing with momentum', 'Controlled reps keep the work on the abs.']]),
   reverse_crunch: M('core_flex', ['Lie on your back, knees bent, hands at your sides.', 'Lower back down.'],
     ['Curl the hips off the floor toward your chest.', 'Pause.', 'Lower slowly.'],
     [['Swinging the legs', 'Lift the hips with the abs.']]),
@@ -559,6 +560,31 @@ export const HOWTO = {
 
 export const BREATH_TEXT = BREATH;
 
+// What studies say, for the cues that have been tested. Everything else in
+// this file is standard coaching technique. Full references: docs/form-sources.md.
+export const BREATH_SOURCE = 'Breathing out through the hard part is the standard advice (NSCA). Holding your breath briefly stiffens the trunk for heavy lifts but sharply raises blood pressure (Hackett & Chow 2013; MacDougall 1985).';
+const KNEES = 'Letting the knees travel past the toes is normal: stopping them raised the load on the hips and lower back (Fry 2003).';
+const DEEP = 'Deep squats grew the glutes and inner thighs more than half squats; quads grew about the same (Kubo 2019).';
+const SEATED_CURL = 'Seated curls grew the hamstrings more than lying curls (+14% vs +9% in 12 weeks), likely because the hamstrings are stretched (Maeo 2021).';
+const OVERHEAD = 'Overhead extensions grew the triceps, especially the long head, more than the same exercise with the arms at your sides, even with lighter weights (Maeo 2023).';
+const LUNGE = 'Longer lunge steps put less stress on the kneecap than short ones (Escamilla 2008); leaning forward a little works the glutes more (Farrokhi 2008).';
+const RAISE = 'Thumbs-down ("empty can") raises tip the shoulder blade in a way that narrows the space for the shoulder tendons, and hurt more in people with shoulder pain (Thigpen 2006).';
+export const RESEARCH = {
+  flat_press: ['Elbows at about 45° is expert advice to limit shoulder stress (Green & Comfort 2007); it hasn\'t been tested in trials, so a little more or less is fine if it feels good.'],
+  incline_press: ['In an EMG study the upper chest worked hardest at about 30°; past about 45° the front delts take over more (Rodríguez-Ridao 2020).'],
+  lat_pulldown: ['Pulling to the front worked the lats as well or better than behind the neck (Signorile 2002), without the shoulder strain.'],
+  squat: [DEEP, KNEES], front_squat: [DEEP, KNEES], goblet_squat: [DEEP, KNEES], hack_squat: [KNEES], pendulum_squat: [KNEES],
+  leg_press: ['Heavy leg presses with a held breath pushed blood pressure higher than any other lift measured, up to 480/350 (MacDougall 1985). Breathe out on each push.'],
+  seated_leg_curl: [SEATED_CURL], lying_leg_curl: [SEATED_CURL],
+  overhead_extension: [OVERHEAD], pushdown: [OVERHEAD],
+  standing_calf_raise: ['Calf raises that focused on the stretched bottom half grew the calves at least as well as full reps (Kassiano 2023).'],
+  seated_calf_raise: ['With the knees bent the big calf muscle (gastrocnemius) is slack, so the soleus underneath does more of the work.'],
+  lunge: [LUNGE], split_squat: [LUNGE],
+  lateral_raise: [RAISE], front_raise: [RAISE],
+  upright_row: ['Raising the elbows above the shoulders while the arms turn inward can pinch the shoulder; a wider grip and stopping at shoulder height avoids it (Schoenfeld, Kolber & Haimes 2011).'],
+  curl: ['Rep speed barely matters for growth: anything from half a second to 8 seconds per rep works when sets are hard (Schoenfeld 2015). Slow lowering is about control.'],
+};
+
 /** Everything for one exercise, or null if its movement has no entry. */
 export function howTo(ex) {
   const h = HOWTO[ex?.movement];
@@ -567,6 +593,8 @@ export function howTo(ex) {
   return {
     setup: h.setup, steps: h.steps, mistakes: h.mistakes,
     breath: BREATH[breathKey],
+    breathSource: breathKey === 'heavy' ? BREATH_SOURCE : null,
+    research: RESEARCH[ex.movement] || [],
     fixes: { ...fixes, ...h.fix },
   };
 }
