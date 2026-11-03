@@ -4,6 +4,7 @@ import { mergeExercise, mergePreview, moveHistory } from './merge.js';
 import { packWorkout, unpackWorkout, resolveShared } from './together.js';
 import { workoutsCsv } from './export.js';
 import { tipsFor } from './tips.js';
+import { GEAR, GEAR_KEYS, FREE_WEIGHTS, FULL_GYM, fitsGear, isFullGym, capDumbbell } from './equipment.js';
 import { howTo, videoUrl, SYMPTOMS, PAIN_SYMPTOMS } from './howto.js';
 import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion } from './builder.js';
 import {
@@ -349,8 +350,11 @@ function suggestionFor(ex, fatigue = 0, zone = null) {
     // estimates. A lighter session after missed targets still counts normally.
     sug = deloadSuggestion(sug, ex, inc, bodyweightOn());
   }
-  return sug;
+  return capFor(sug, ex, workoutGear()?.maxDb);
 }
+
+// Heaviest-dumbbell limit: that dumbbell with more reps.
+const capFor = (sug, ex, maxDb) => capDumbbell(sug, ex, maxDb, (wt, i) => targetFor({ ...sug, zone: [1, 30] }, ex, wt, i, bodyweightOn()));
 
 // A fresh exercise entry. `from` gives a rough starting weight when swapping
 // to a lift with no history: { ex, weight }.
@@ -1415,6 +1419,29 @@ const usable = () => { const b = new Set(blocked()); return allExercises().filte
 const pace = () => paceFromHistory(state.workouts, state.settings.defaultRest);
 // What plans and suggestions may pick: common versions plus anything you've used or starred.
 const pool = () => planPool(usable(), { usage: usageCounts(), stars: stars() });
+// Equipment setups for "Build today's workout". Weekly plans always use the full gym.
+const gearSetups = () => [FULL_GYM, ...(state.settings.gearSetups || [])];
+const currentSetup = () => gearSetups().find(x => x.id === state.settings.gearLast) || FULL_GYM;
+const gearOf = g => (isFullGym(g.gear) && !g.maxDb ? null : { name: g.name, gear: g.gear, maxDb: g.maxDb || null });
+const gearSummary = g => `${GEAR.filter(([k]) => g.gear.includes(k)).map(([, l]) => l).join(', ') || 'Bodyweight only'}${g.maxDb ? ` · dumbbells up to ${fmtW(toDisplay(g.maxDb, U()))} ${wu()}` : ''}`;
+// The active workout's equipment, if it was built for a smaller gym.
+const workoutGear = () => state.activeWorkout?.gear || null;
+const fitsWorkout = (ex, all) => all || !workoutGear() || fitsGear(ex, workoutGear().gear);
+const tplGear = t => (t.gear ? { gear: t.gear } : {});
+// What the builder may pick with this equipment: the usual pool, topped up with
+// every fitting lift for muscles that would be left with fewer than 3 options.
+function gearPool(gear) {
+  const p = pool();
+  if (!gear) return p;
+  const fit = usable().filter(e => fitsGear(e, gear.gear));
+  const list = planPool(fit, { usage: usageCounts(), stars: stars() }).exercises;
+  const ids = new Set(list.map(e => e.id));
+  for (const m of Object.keys(MUSCLES)) {
+    if (list.filter(e => e.muscle === m).length >= 3) continue;
+    for (const e of fit) if (e.muscle === m && !e.custom && !ids.has(e.id)) { list.push(e); ids.add(e.id); }
+  }
+  return { exercises: list, usage: p.usage };
+}
 // deload / deloadNext: a deload week covers this week / next week, so the plan plans fewer sets.
 const planCtx = () => {
   const p = pool();
@@ -1805,7 +1832,7 @@ function startFromReadiness(answers) {
   const readiness = answers ? { ...answers, poor: readinessAdjust([], answers).poor } : null;
   if (s.kind === 'plan') { startPlanned(s.seq, readiness); return; }
   const t = state.templates.find(x => x.id === s.id);
-  if (t) startWorkout(t.splitId, t, t, undefined, {}, readiness);
+  if (t) startWorkout(t.splitId, t, t, undefined, tplGear(t), readiness);
   else closeSheet();
 }
 
@@ -1839,7 +1866,7 @@ function keepOut(i, msg) {
   if (state.plan) state.plan = dropFromBlock(state.plan, e.exId, { ...planCtx(), blocked: blocked() });
   const inWorkout = w.exercises.map(x => x.exId);
   const fallbackPlan = state.plan || { profile: { equipment: 'gym', level: 'intermediate' } };
-  const p = pool();
+  const p = gearPool(w.gear || null);
   const repl = replacementFor(e.exId, { plan: fallbackPlan, exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, exclude: inWorkout });
   if (!e.sets.some(s => s.done)) {
     if (repl) { replaceEntry(i, repl.id); msg = `Swapped for ${repl.name}. ${msg}`; } else w.exercises.splice(i, 1);
@@ -1890,7 +1917,7 @@ function swapListHtml() {
   const blockedSet = new Set(blocked());
   const inWorkout = new Set(state.activeWorkout.exercises.map(x => x.exId));
   const options = searchExercises(allExercises(), s.q || '', m ? { muscle: m } : {}, { usage: usageCounts(), stars: stars() })
-    .filter(x => x.id !== ex.id && !blockedSet.has(x.id)).slice(0, 60);
+    .filter(x => x.id !== ex.id && !blockedSet.has(x.id) && fitsWorkout(x, s.allGear)).slice(0, 60);
   return options.map(x => `<button class="pick" data-act="doSwap" data-id="${x.id}"><span>${esc(x.name)}${inWorkout.has(x.id) ? '<em class="hit-tag">Already in this workout</em>' : ''}</span><span class="muted pick-eq">${m ? '' : `${MUSCLES[x.muscle]} · `}${EQUIP_ICON[x.equipment] || ''}${esc(EQUIPMENT[x.equipment]?.name || '')}</span></button>`).join('')
     || '<div class="empty">No match.</div>';
 }
@@ -1968,7 +1995,7 @@ function focusRender() {
   el.innerHTML = `${top}<div class="fx-set">
     ${over ? '<div class="fx-go">Go — next set!</div>' : ''}
     <div class="fx-ex"><span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[ex.muscle] || ''}</span><h2>${esc(ex.name)}</h2>
-      <small>${st.warmup ? 'Warm-up set' : `Set ${k + 1} of ${work.length}`}${e.group ? ` · superset ${groupLetter(w, e.group)}` : ''}${st.target?.reps ? ` · goal ${repsTxt(ex, st.target.reps)}${isTimed(ex) ? '' : ' reps'}` : ''}</small>
+      <small>${st.warmup ? 'Warm-up set' : `Set ${k + 1} of ${work.length}`}${e.group ? ` · superset ${groupLetter(w, e.group)}` : ''}<span id="fGoal">${st.target?.reps ? ` · goal ${repsTxt(ex, st.target.reps)}${isTimed(ex) ? '' : ' reps'}` : ''}</span></small>
       ${last ? `<small class="fx-last">Last time: ${esc(setsSummary(ex, last.sets))}</small>` : ''}
       ${!e.suggestion && !st.warmup && k === 0 ? '<small class="fx-last">New lift: pick a weight you could do about 10 times and stop with 2 reps left.</small>' : ''}</div>
     <div class="fx-field"><span>${isAssist(ex) ? 'Assistance' : isBW(ex) ? 'Added weight' : 'Weight'} (${wu()})</span>
@@ -1986,6 +2013,15 @@ function focusRender() {
     <button class="fx-done-btn" data-act="focusDone">${ICON.check} Done</button>
     <div class="fx-more"><button data-act="howtoOpen" data-id="${ex.id}">How to?</button><button data-act="focusSkip">Skip rest of this exercise</button><button data-act="focusClose">Full view</button></div>
   </div>`;
+}
+
+// After a weight change: show the new rep goal. The reps box follows it
+// unless you've entered reps yourself.
+function focusShowGoal(ex, st) {
+  const g = $('#fGoal');
+  if (g) g.textContent = st.target?.reps ? ` · goal ${repsTxt(ex, st.target.reps)}${isTimed(ex) ? '' : ' reps'}` : '';
+  const r = $('#fR');
+  if (r && st.reps == null && !isTimed(ex)) r.value = st.target?.reps ?? '';
 }
 
 // Timer numbers only (called every half second while resting).
@@ -2082,14 +2118,16 @@ function pickerList(query) {
     return pickRowHtml(ex, 'pick', { added: added.has(ex.id), tag: missing ? '<em class="hit-tag off">Not at your gym</em>' : r ? `<em class="hit-tag">Hits ${esc(REGIONS[r].name.toLowerCase())}</em>` : '' });
   };
   if (q || f.muscle || f.equipment || f.angle) {
-    const res = searchExercises(allExercises(), q, f, { usage: counts, stars: stars() });
+    const res = searchExercises(allExercises().filter(e => fitsWorkout(e, ui.pickAllGear)), q, f, { usage: counts, stars: stars() });
     if (!res.length) return `<div class="empty">No match. Try fewer words or filters, or create it as a custom exercise.</div>`;
     return res.slice(0, 80).map(item).join('') + (res.length > 80 ? `<p class="muted small">Showing 80 of ${res.length}. Add a filter to narrow it down.</p>` : '');
   }
   // No search: the usual versions per muscle (plus anything you've used or starred).
   const starred = new Set(stars());
   const away = new Set(state.settings.notAtGym || []);
-  const usual = e => !away.has(e.id) && (e.common || e.custom || counts[e.id] || starred.has(e.id));
+  // A smaller gym shows every lift that fits; otherwise the usual versions.
+  const gearOnly = workoutGear() && !ui.pickAllGear;
+  const usual = e => !away.has(e.id) && fitsWorkout(e, ui.pickAllGear) && (gearOnly || e.common || e.custom || counts[e.id] || starred.has(e.id));
   const starFirst = (a, b) => starred.has(b.id) - starred.has(a.id) || sortFn(a, b);
   const weekSets = muscleSets(state.workouts, exercise, new Date(Date.now() - 7 * DAY).toISOString());
   const target = state.settings.weeklyTarget;
@@ -2111,12 +2149,18 @@ function buildBudget() {
 function runBuild() {
   const b = ui.build;
   const budget = buildBudget();
+  const gear = gearOf(currentSetup());
+  const gp = gearPool(gear);
   const plan = buildWorkout({
-    workouts: state.workouts, lookup: exercise, exercises: pool().exercises, budget, mode: b.mode, muscles: b.muscles,
+    workouts: state.workouts, lookup: exercise, exercises: gp.exercises, budget, mode: b.mode, muscles: b.muscles,
     weeklyTarget: state.settings.weeklyTarget, ignored: state.settings.ignoredRegions, snoozed: state.settings.neglectSnooze,
-    seed: b.seed, usage: pool().usage, exclude: blocked(),
+    seed: b.seed, usage: gp.usage, exclude: blocked(),
   });
-  if (plan.error) { b.error = plan; b.plan = null; openSheet({ type: 'build' }); return; }
+  // Picked muscles this equipment can't train (fewer than 2 lifts fit).
+  const gearMissing = gear && b.mode === 'pick' ? b.muscles.filter(m => gp.exercises.filter(e => e.muscle === m).length < 2) : [];
+  if (plan.error) { b.error = { ...plan, gearMissing }; b.plan = null; openSheet({ type: 'build' }); return; }
+  plan.gear = gear;
+  plan.gearMissing = gearMissing;
   b.error = null;
   b.plan = plan;
   b.budget = budget;
@@ -2146,7 +2190,8 @@ function sheetHtml() {
       const saved = state.templates.filter(t => t.splitId === CUSTOM_SPLIT.id);
       const seg = (act, cur, items) => `<div class="seg">${items.map(([v, l]) => `<button data-act="${act}" data-v="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
       let err = '';
-      if (b.error?.error === 'noMuscles') err = `<div class="banner info"><div>Pick at least one muscle.</div></div>`;
+      if (b.error?.error === 'noMuscles') err = `<div class="banner info"><div>${b.error.gearMissing?.length ? `${esc(b.error.gearMissing.map(m => MUSCLES[m]).join(', '))}: not enough exercises with this equipment. Pick other muscles or edit the setup.` : 'Pick at least one muscle.'}</div></div>`;
+      const setup = currentSetup();
       if (b.error?.error === 'tooSmall') {
         err = b.error.fit
           ? `<div class="banner info"><div>${b.muscles.length} muscles need at least ${b.muscles.length * 4} sets (2 exercises × 2 sets each).</div>
@@ -2158,6 +2203,8 @@ function sheetHtml() {
         ${b.mode === 'auto'
           ? `<p class="muted small" style="margin-top:-4px">Picks what you need most today: muscles behind on weekly sets, neglected areas, and how rested you are.</p>`
           : `<div class="chips">${Object.entries(MUSCLES).map(([k, n]) => `<button data-act="bMuscle" data-v="${k}" class="${b.muscles.includes(k) ? 'on' : ''}">${n}</button>`).join('')}</div>`}
+        <div class="field"><span>Equipment</span><div class="chips">${gearSetups().map(g => `<button data-act="gearPick" data-v="${g.id}" class="${g.id === setup.id ? 'on' : ''}">${esc(g.name)}</button>`).join('')}${setup.id !== 'full' ? `<button data-act="gearEdit" data-id="${setup.id}">✎ Edit</button>` : ''}<button data-act="gearEdit">+ New setup</button></div></div>
+        ${setup.id !== 'full' ? `<p class="muted small" style="margin-top:-4px">${esc(gearSummary(setup))}. Only lifts you can do with this are picked.</p>` : ''}
         <div class="field"><span>Volume</span>${seg('bUnit', b.unit, [['sets', 'Sets'], ['min', 'Minutes']])}</div>
         <div class="plates-weight">
           <button data-act="bStep" data-d="-1" aria-label="Less">−</button>
@@ -2173,12 +2220,24 @@ function sheetHtml() {
             <button class="tpl-edit" data-act="tplEdit" data-id="${t.id}">Edit</button>
           </div>`).join('')}</div>` : ''}`;
     }
+    case 'gearEdit': {
+      const d = s.draft;
+      return `<h2>${s.id ? 'Edit setup' : 'New equipment setup'}</h2>
+        <p class="muted small">For "Build today's workout" only. Weekly plans always use the full gym.</p>
+        <label class="field"><span>Name</span><input id="gearName" value="${esc(d.name)}" placeholder="e.g. Apartment gym" autocomplete="off"></label>
+        <div class="field"><span>Quick pick</span><div class="seg"><button data-act="gearQuick" data-v="free">Free weights only</button><button data-act="gearQuick" data-v="all">Everything</button></div></div>
+        <div class="field"><span>What this gym has</span><div class="chips">${GEAR.map(([k, l]) => `<button data-act="gearToggle" data-v="${k}" class="${d.gear.includes(k) ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+        <p class="muted small">Bodyweight exercises on the floor are always included.</p>
+        <label class="field"><span>Heaviest dumbbell (${wu()}, optional)</span><input id="gearMaxDb" inputmode="decimal" value="${esc(d.maxDbTxt)}" placeholder="No limit"></label>
+        <p class="muted small" style="margin-top:-4px">If a lift needs more, you get that dumbbell with more reps instead.</p>
+        <div class="stack"><button class="btn primary" data-act="gearSave">Save</button>${s.id ? '<button class="btn" data-act="gearDelete">Delete setup</button>' : ''}<button class="btn ghost" data-act="buildSheet">Cancel</button></div>`;
+    }
     case 'buildPreview': {
       const p = ui.build.plan;
       const pace = paceFromHistory(state.workouts, state.settings.defaultRest);
       const rows = p.items.map((it, i) => {
         const ex = exercise(it.exId);
-        const sug = suggestionFor(ex);
+        const sug = capFor(suggestionFor(ex), ex, p.gear?.maxDb);
         const load = sug ? `${weightLabel(ex, sug.weight)} × ${sug.reps[0]}` : 'new — find your weight';
         return `<div class="bp-row">
           <div class="bp-main">
@@ -2194,6 +2253,8 @@ function sheetHtml() {
         ? `<p class="muted small">${p.totalSets} of ${ui.build.budget} sets: each muscle is at about 10 sets, the most that still pays off in one workout. Add a muscle to use the rest.</p>` : '';
       return `<h2>Today's workout</h2>
         <p class="muted small" style="margin-top:-6px">${p.totalSets} sets · ≈ ${Math.round((p.totalSets * pace) / 60)} min · ${esc(p.muscles.map(m => MUSCLES[m]).join(', '))}</p>
+        ${p.gear ? `<p class="muted small">Equipment: ${esc(p.gear.name)}. Swaps and added lifts stick to it during the workout.</p>` : ''}
+        ${p.gearMissing?.length ? `<p class="muted small">Left out (not enough exercises with this equipment): ${esc(p.gearMissing.map(m => MUSCLES[m]).join(', '))}.</p>` : ''}
         ${short}
         <div class="bp-list">${rows || '<div class="empty">Everything was removed.</div>'}</div>
         <div class="stack" style="margin-top:14px">
@@ -2297,6 +2358,7 @@ function sheetHtml() {
       return `<h2>Add exercise</h2>
         <input class="search" id="pickerSearch" placeholder="Search, e.g. incline plate, pin row, smith squat" autocomplete="off" value="${esc(ui.pickQuery || '')}">
         <div id="pickFilters">${pickFiltersHtml()}</div>
+        ${workoutGear() ? `<button class="btn ghost" style="margin:6px 0" data-act="pickAllGear">${ui.pickAllGear ? `Only ${esc(workoutGear().name)} equipment` : 'Show all equipment'}</button>` : ''}
         <div id="pickerList">${pickerList(ui.pickQuery || '')}</div>
         <button class="btn ghost" style="margin-top:14px" data-act="customSheet">+ Custom exercise</button>`;
     case 'custom': {
@@ -2376,6 +2438,7 @@ function sheetHtml() {
         <p class="muted small">${e.sets.some(x => x.done) ? 'Your logged sets stay — the new lift is added below.' : 'Pick any muscle. Same-muscle lifts get a rough starting weight.'}</p>
         <input class="search" id="swapSearch" placeholder="Search any exercise" autocomplete="off" value="${esc(s.q || '')}">
         <div class="chip-row">${chip(ex.muscle, `${MUSCLES[ex.muscle]} (same)`)}${chip('', 'Any muscle')}${Object.entries(MUSCLES).filter(([k]) => k !== ex.muscle).map(([k, n]) => chip(k, n)).join('')}</div>
+        ${workoutGear() ? `<button class="btn ghost" style="margin:6px 0" data-act="swapAllGear">${s.allGear ? `Only ${esc(workoutGear().name)} equipment` : 'Show all equipment'}</button>` : ''}
         <div id="swapList">${swapListHtml()}</div>`;
     }
     case 'superset': {
@@ -2802,7 +2865,7 @@ const actions = {
     const t = state.templates.find(x => x.id === el.dataset.id);
     if (!t) return;
     if (state.settings.readinessCheck !== false) { ui.ready = { sleep: 'ok', soreness: 'some', energy: 'ok' }; openSheet({ type: 'readiness', kind: 'tpl', id: t.id }); return; }
-    startWorkout(t.splitId, t, t);
+    startWorkout(t.splitId, t, t, undefined, tplGear(t));
   },
   safetySheet() { openSheet({ type: 'safety' }); },
   installSheet() { openSheet({ type: 'install' }); },
@@ -2966,7 +3029,8 @@ const actions = {
     refreshPlan();
     render();
   },
-  picker() { ui.pick = { muscle: '', equipment: '', angle: '' }; ui.pickQuery = ''; openSheet({ type: 'picker' }); },
+  picker() { ui.pick = { muscle: '', equipment: '', angle: '' }; ui.pickQuery = ''; ui.pickAllGear = false; openSheet({ type: 'picker' }); },
+  pickAllGear() { ui.pickAllGear = !ui.pickAllGear; renderSheet(); },
   pickF(el) {
     const { k, v } = el.dataset;
     ui.pick[k] = ui.pick[k] === v ? '' : v;
@@ -3283,6 +3347,7 @@ const actions = {
   },
   hurtSheet() { openSheet({ type: 'hurt', ei: ui.sheet.ei }); },
   hurtSwap() { openSheet({ type: 'swap', ei: ui.sheet.ei }); },
+  swapAllGear() { ui.sheet.allGear = !ui.sheet.allGear; renderSheet(); },
   hurtAvoid() {
     const e = state.activeWorkout.exercises[ui.sheet.ei];
     state.settings.painFlags = { ...(state.settings.painFlags || {}), [e.exId]: new Date().toISOString() };
@@ -3489,6 +3554,38 @@ const actions = {
 
   // Builder
   buildSheet() { ui.build.error = null; openSheet({ type: 'build' }); },
+  gearPick(el) { state.settings.gearLast = el.dataset.v; save(); ui.build.error = null; renderSheet(); },
+  gearEdit(el) {
+    const g = el.dataset.id && (state.settings.gearSetups || []).find(x => x.id === el.dataset.id);
+    openSheet({ type: 'gearEdit', id: g?.id || null, draft: { name: g?.name || '', gear: [...(g?.gear || FREE_WEIGHTS)], maxDbTxt: g?.maxDb ? fmtW(toDisplay(g.maxDb, U())) : '' } });
+  },
+  gearToggle(el) { const d = ui.sheet.draft; const k = el.dataset.v; d.gear = d.gear.includes(k) ? d.gear.filter(x => x !== k) : [...d.gear, k]; renderSheet(); },
+  gearQuick(el) { ui.sheet.draft.gear = el.dataset.v === 'free' ? [...FREE_WEIGHTS] : [...GEAR_KEYS]; renderSheet(); },
+  gearSave() {
+    const s = ui.sheet;
+    const d = s.draft;
+    const name = d.name.trim();
+    if (!name) { toast('Give it a name'); $('#gearName')?.focus(); return; }
+    const v = parseFloat(d.maxDbTxt);
+    const item = { id: s.id || 'g_' + uid(), name, gear: GEAR_KEYS.filter(k => d.gear.includes(k)), maxDb: v > 0 ? fromDisplay(v, U()) : null };
+    const list = [...(state.settings.gearSetups || [])];
+    const i = list.findIndex(x => x.id === item.id);
+    if (i >= 0) list[i] = item; else list.push(item);
+    state.settings.gearSetups = list;
+    state.settings.gearLast = item.id;
+    save();
+    toast(`Saved “${name}”`);
+    ui.build.error = null;
+    openSheet({ type: 'build' });
+  },
+  gearDelete() {
+    const id = ui.sheet.id;
+    state.settings.gearSetups = (state.settings.gearSetups || []).filter(x => x.id !== id);
+    if (state.settings.gearLast === id) state.settings.gearLast = 'full';
+    save();
+    toast('Setup deleted');
+    openSheet({ type: 'build' });
+  },
   bMode(el) { ui.build.mode = el.dataset.v; ui.build.error = null; renderSheet(); },
   bUnit(el) { ui.build.unit = el.dataset.v; ui.build.error = null; renderSheet(); },
   bStep(el) {
@@ -3520,8 +3617,9 @@ const actions = {
     const tried = (ui.build.swapped[it.muscle] ||= new Set());
     tried.add(it.exId);
     // Same muscle, not already in the workout; prefer the same region, then familiar lifts.
-    let options = allExercises().filter(x => x.muscle === it.muscle && !inPlan.has(x.id) && !tried.has(x.id));
-    if (!options.length) { tried.clear(); tried.add(it.exId); options = allExercises().filter(x => x.muscle === it.muscle && !inPlan.has(x.id)); }
+    const fits = x => !p.gear || fitsGear(x, p.gear.gear);
+    let options = allExercises().filter(x => x.muscle === it.muscle && fits(x) && !inPlan.has(x.id) && !tried.has(x.id));
+    if (!options.length) { tried.clear(); tried.add(it.exId); options = allExercises().filter(x => x.muscle === it.muscle && fits(x) && !inPlan.has(x.id)); }
     if (!options.length) { toast('No other exercises for this muscle'); return; }
     options.sort((a, b) => ((exerciseRegions(b)[it.region] || 0) - (exerciseRegions(a)[it.region] || 0)) || ((counts[b.id] || 0) - (counts[a.id] || 0)));
     const next = options[0];
@@ -3538,13 +3636,13 @@ const actions = {
   bpStart() {
     const p = ui.build.plan;
     if (!p?.items.length) return;
-    startWorkout(CUSTOM_SPLIT.id, { exercises: p.items.map(i => ({ exId: i.exId, sets: i.sets })) }, null, 'Built workout');
+    startWorkout(CUSTOM_SPLIT.id, { exercises: p.items.map(i => ({ exId: i.exId, sets: i.sets })) }, null, 'Built workout', p.gear ? { gear: p.gear } : {});
   },
   bpSave() {
     const name = $('#bpName').value.trim();
     if (!name) { toast('Give it a name'); $('#bpName').focus(); return; }
     const p = ui.build.plan;
-    state.templates.push({ id: 't_' + uid(), splitId: CUSTOM_SPLIT.id, name, exercises: p.items.map(i => ({ exId: i.exId, sets: i.sets })) });
+    state.templates.push({ id: 't_' + uid(), splitId: CUSTOM_SPLIT.id, name, exercises: p.items.map(i => ({ exId: i.exId, sets: i.sets })), ...(p.gear ? { gear: p.gear } : {}) });
     save();
     toast(`Saved “${name}”`);
   },
@@ -3756,6 +3854,7 @@ const actions = {
       else st.weight = Math.max(0, Math.round(((st.weight ?? st.target?.weight ?? 0) + d * inc) / inc) * inc);
       if (e.suggestion && !st.done) { const reps = targetFor(e.suggestion, ex, st.weight, e.sets.filter(x => !x.warmup).indexOf(st), bodyweightOn()); if (reps) st.target = { weight: st.weight, reps }; }
       $('#fW').value = fmtW(shownW(ex, st.weight));
+      focusShowGoal(ex, st);
     } else {
       st.reps = Math.max(0, (st.reps ?? st.target?.reps ?? 0) + d);
       $('#fR').value = st.reps;
@@ -3905,6 +4004,7 @@ document.addEventListener('input', ev => {
     if (el.id === 'fW') {
       st.weight = v == null ? null : fromDisplay(v, U()) * (isAssist(ex) ? -1 : 1);
       if (e.suggestion && st.weight != null) { const reps = targetFor(e.suggestion, ex, st.weight, e.sets.filter(x => !x.warmup).indexOf(st), bodyweightOn()); if (reps) st.target = { weight: st.weight, reps }; }
+      focusShowGoal(ex, st);
     } else st.reps = v == null ? null : Math.round(v);
     save();
     return;
@@ -3913,7 +4013,8 @@ document.addEventListener('input', ev => {
   if (el.id === 'matchSearch') { ui.matchQ = el.value; $('#matchList').innerHTML = matchListHtml(); return; }
   if (el.id === 'cName') { $('#cMatches').innerHTML = customMatchesHtml(el.value, $('#cMuscle')?.value); return; }
   // Keep typed names in the draft so re-rendering the sheet doesn't lose them.
-  if (el.id === 'spName' || el.id === 'tplName') { ui.sheet.draft.name = el.value; return; }
+  if (el.id === 'spName' || el.id === 'tplName' || el.id === 'gearName') { ui.sheet.draft.name = el.value; return; }
+  if (el.id === 'gearMaxDb') { ui.sheet.draft.maxDbTxt = el.value; return; }
   const f = el.dataset.field;
   if (f === 'weight' || f === 'reps') {
     const c = setCtx(el);
