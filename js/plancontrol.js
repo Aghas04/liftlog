@@ -62,6 +62,30 @@ export function createPlan({ profile, splitId, exercises, usage, workouts, looku
   };
 }
 
+/**
+ * New lift picks for every workout not done yet (the rest of this week and
+ * later weeks). Done workouts keep their history and still count this week;
+ * the plan, its block, days and learned exclusions stay. Lifts you've done,
+ * starred or swapped into upcoming days are preferred.
+ * Returns a new plan.
+ */
+export function regeneratePlan(plan, { exercises, workouts = [], lookup, stars = [], blocked = [], now = Date.now() }) {
+  const own = ownWorkouts(plan, workouts);
+  const done = new Set(own.filter(w => w.plan?.id === plan.id).map(w => w.plan.seq));
+  const usage = {};
+  for (const w of own) for (const e of w.exercises) if (workingSets(e).length) usage[e.exId] = (usage[e.exId] || 0) + 1;
+  for (const [seq, we] of Object.entries(plan.weekEdits || {})) {
+    if (done.has(+seq)) continue;
+    for (const to of Object.values(we.replace || {})) usage[to] = (usage[to] || 0) + 2;
+  }
+  const pool = planPool(exercises, { usage, stars });
+  const seed = (plan.seed || 1) + 1;
+  const allBlocked = [...new Set([...blocked, ...(plan.profile.avoid || []), ...(plan.excluded || [])])];
+  const slots = buildBlock({ profile: plan.profile, splitId: plan.splitId, exercises: pool.exercises, usage: pool.usage, workouts: own, lookup, now, seed, blocked: allBlocked, keepCore: false });
+  const weekEdits = Object.fromEntries(Object.entries(plan.weekEdits || {}).filter(([seq]) => done.has(+seq)));
+  return { ...plan, slots, seed, weekEdits };
+}
+
 /** Weeks since the block started (0 in the first week). */
 export const blockWeek = (plan, now = Date.now()) => Math.floor((weekKey(now) - weekKey(new Date(plan.blockStart).getTime())) / (7 * DAY));
 

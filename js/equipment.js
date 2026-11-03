@@ -43,6 +43,19 @@ export function needsOf(ex) {
   return [...need];
 }
 
+// Presses where dumbbells train the lift differently from a bar or machine:
+// a deeper stretch and each arm working on its own, against heavier, steadier
+// loading with the bar or machine. Having both on different days is useful.
+const DB_DIFFERS = new Set(['flat_press', 'incline_press', 'decline_press', 'overhead_press']);
+
+/**
+ * Are two versions of the same movement worth having both (on different days)?
+ * Only when they train it differently. Machine vs dumbbell hip thrust, say,
+ * train the same part the same way: switching adds nothing and restarts progress.
+ */
+export const worthBoth = (a, b) => !!a && !!b && a.id !== b.id && a.movement === b.movement
+  && DB_DIFFERS.has(a.movement) && (a.equipment === 'dumbbell') !== (b.equipment === 'dumbbell');
+
 /** Can this exercise be done with this gear? */
 export function fitsGear(ex, gear) {
   const have = gear instanceof Set ? gear : new Set(gear);

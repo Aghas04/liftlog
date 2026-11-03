@@ -19,7 +19,7 @@ import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById
 import {
   createPlan, blockedLifts, maintainPlan, currentWeek, upcomingDays, weekVolume, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
   unexclude, dropFromBlock, sessionEntries, runReview, approveReview, postponeReview, reviewDue, isPaused, blockWeek,
-  replacementFor, swapOptions, STRENGTH_ZONE, planPool,
+  replacementFor, swapOptions, STRENGTH_ZONE, planPool, regeneratePlan,
 } from './plancontrol.js';
 import {
   recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets,
@@ -1583,6 +1583,7 @@ function viewPlan() {
     <p class="muted small">Small muscles also count half of the sets they get from bigger lifts (triceps from presses, for example).</p></details>` : ''}
   <div class="plan-actions">
     <button class="btn" data-act="planDaysSheet">📅 Change days this week</button>
+    <button class="btn" data-act="planRegen">🔄 Regenerate upcoming workouts</button>
     ${paused ? '' : `<button class="btn" data-act="planPauseSheet">⏸️ Pause plan</button>`}
     <button class="btn" data-act="planSetup">⚙️ Plan settings</button>
     <button class="btn ghost" data-act="whySheet">📚 Why this works</button>
@@ -3483,6 +3484,16 @@ const actions = {
     toast('Days updated for this week');
   },
   planPauseSheet() { openSheet({ type: 'planPause' }); },
+  planRegen() {
+    if (!state.plan) return;
+    if (!confirm('Pick new lifts for every workout you haven\'t done yet? Done workouts stay as they are, and lifts you use are kept where they fit.')) return;
+    withUndo('Upcoming workouts regenerated', () => {
+      state.plan = regeneratePlan(state.plan, { exercises: usable(), workouts: state.workouts, lookup: exercise, stars: stars(), blocked: blocked() });
+      refreshPlan();
+      save();
+    });
+    render();
+  },
   ppFor(el) { pauseUntil(new Date(startOfDay(Date.now()) + +el.dataset.v * DAY)); },
   ppDate() {
     const v = $('#ppDate').value;

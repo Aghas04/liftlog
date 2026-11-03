@@ -15,6 +15,7 @@
 import { MUSCLES, REGIONS, regionsOf, exerciseRegions, primaryRegion, allowedBy } from './data.js';
 import { workingSets, sessionE1RM, sessionMissed, DELOAD_SETS } from './engine.js';
 import { neglectedRegions, DIRECT, weekKey } from './insights.js';
+import { worthBoth } from './equipment.js';
 
 const DAY = 86400000;
 export const PER_SESSION_CAP = 10;
@@ -259,6 +260,9 @@ export function buildBlock(input) {
   const neglect = new Set(neglectedRegions(workouts, lookup, { now }).map(n => n.region));
   const slots = {};
   const coveredBy = {};
+  const usedVersions = exercises.filter(e => usage[e.id] && e.movement);
+  const plainSwitch = ex => !usage[ex.id] && usedVersions.some(u => u.movement === ex.movement && !worthBoth(u, ex));
+  const moveOf = id => lookup(id)?.movement;
   for (const type of [...new Set(split.rotation)]) {
     const day = PLAN_DAYS[type];
     slots[type] = [];
@@ -296,7 +300,14 @@ export function buildBlock(input) {
             if (used.has(main)) s -= 6;
             if (ex.hard && profile.level !== 'advanced') s -= 5;              // e.g. Nordic curls: advanced only
             if (!ex.regions) s -= 3;                                          // custom lift: its coverage is a guess
-            if (j === 0 && (firstPicks[m] || []).includes(ex.id)) s -= 2.5; // A/B/C variants differ
+            // A/B/C variants differ by movement, or by a version that trains it
+            // differently (dumbbell vs barbell incline). The same lift again beats a
+            // version with nothing new (dumbbell vs machine hip thrust).
+            if (j === 0 && (firstPicks[m] || []).includes(ex.id)) s -= 1.5;
+            else if (j === 0 && ex.movement && (firstPicks[m] || []).some(id => moveOf(id) === ex.movement && !worthBoth(lookup(id), ex))) s -= 5;
+            else if (j === 0 && (firstPicks[m] || []).some(id => worthBoth(lookup(id), ex))) s += 2.5; // the other version on another day
+            if (plainSwitch(ex)) s -= 4;                                    // stick with the version you use
+            if (j > 0 && ex.movement && picks.some(id => moveOf(id) === ex.movement)) s -= 6; // never two versions in one session
             if (j > 0 && prevList.slice(1).includes(ex.id)) s -= 1.5;        // accessories rotate between blocks
             s += jitter() * 0.6;
             if (s > bestS) { bestS = s; best = ex; }

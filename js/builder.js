@@ -15,6 +15,7 @@
 // indirect work they do in bigger lifts (rows train biceps, presses triceps).
 import { REGIONS, MUSCLES, regionsOf, exerciseRegions, primaryRegion } from './data.js';
 import { orderExercises, PER_SESSION_CAP } from './planner.js';
+import { worthBoth } from './equipment.js';
 import { workingSets } from './engine.js';
 import { regionSets, regionTargets, neglectedRegions, DIRECT } from './insights.js';
 
@@ -190,7 +191,10 @@ export function buildWorkout(input) {
 
   // 4. Exercises per muscle.
   const items = [];
-  const lastIds = new Set((workouts[workouts.length - 1]?.exercises || []).map(e => e.exId));
+  // Another version of a lift you already do (dumbbell vs machine hip thrust)
+  // grows nothing extra and restarts progress, unless it trains it differently.
+  const usedVersions = exercises.filter(e => usage[e.id] && e.movement);
+  const plainSwitch = ex => !usage[ex.id] && usedVersions.some(u => u.movement === ex.movement && !worthBoth(u, ex));
   for (const m of chosen) {
     const nEx = Math.min(byMuscle(m).length, Math.max(2, Math.ceil(alloc[m] / MAX_SETS_PER_EXERCISE)));
     const setsEach = evenSplit(alloc[m], nEx);
@@ -209,7 +213,7 @@ export function buildWorkout(input) {
         if (usage[ex.id]) s += 3 + Math.min(usage[ex.id], 10) * 0.2; // familiar lifts have accurate suggestions
         if (j === 0 && ex.compound) s += 1;
         if (usedRegions.has(main)) s -= 50;                           // different parts of a muscle grow with different lifts
-        if (lastIds.has(ex.id)) s -= 0.75;                            // a little variety from last time
+        if (plainSwitch(ex)) s -= 4;                                  // stick with the version you use
         if (neglectBy[main]) s += 1.5;
         s += jitter() * 1.5;
         if (s > bestScore) { bestScore = s; best = ex; }
