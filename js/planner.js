@@ -49,8 +49,12 @@ export const SPLITS = [
 export const LEVELS = {
   beginner: { base: 10, min: 8, max: 14 },
   intermediate: { base: 14, min: 10, max: 20 },
-  advanced: { base: 18, min: 12, max: 24 },
+  // Advanced plans aim for the most growth: volume keeps paying off past 20
+  // sets, just less per set (Pelland et al. 2024), so they go up to 30 when time allows.
+  advanced: { base: 20, min: 12, max: 30 },
 };
+// Share of a small muscle's weekly goal that bigger lifts usually cover.
+const INDIRECT_SHARE = { biceps: 0.45, triceps: 0.45, forearms: 0.5 };
 // Small muscles already get a lot of indirect work, so they need fewer direct sets.
 const SIZE_FACTOR = { forearms: 0.5, adductors: 0.5, calves: 0.8, abs: 0.8 };
 
@@ -120,7 +124,9 @@ export function weeklyTargets(profile, overrides = {}, secPerSet = 130) {
   }
   const days = (profile.days || []).length;
   const capacity = days * Math.floor(((profile.minutes || 60) * 60) / secPerSet) * TIME_FILL;
-  const total = Object.values(base).reduce((a, b) => a + b, 0);
+  // Sets the sessions actually have to hold: arms and forearms get about half
+  // of their goal from rows, presses and curls, so they need fewer direct sets.
+  const total = Object.entries(base).reduce((a, [m, t]) => a + t * (INDIRECT_SHARE[m] ? 1 - INDIRECT_SHARE[m] : 1), 0);
   const boost = days && capacity > total ? capacity / total : 1;
   const out = {};
   for (const m of Object.keys(MUSCLES)) {
@@ -376,7 +382,9 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
   const WORK_SEC = 40, WARMUP_SEC = 150;
   const perSet = it => (perLift ? WORK_SEC + restSeconds(lookup(it.exId), { base: restSec, zone: it.main ? [3, 6] : null }) : secPerSet);
   const timeOf = () => {
-    let t = items.reduce((s, it) => s + it.sets * perSet(it) + (perLift && it.core && it.compound ? WARMUP_SEC : 0), 0);
+    // Warm-ups: ramp-up sets before the first two big lifts; later lifts start warm.
+    const warm = items.filter(it => it.core && it.compound).slice(0, 2);
+    let t = items.reduce((s, it) => s + it.sets * perSet(it) + (perLift && warm.includes(it) ? WARMUP_SEC : 0), 0);
     const seen = new Set();
     for (const it of items) if (it.superset && !seen.has(it.superset)) {
       seen.add(it.superset);
@@ -528,9 +536,16 @@ export function planWeek(input) {
 
   // Volume: weekly targets minus what's already done this week, spread over
   // the remaining sessions (never above the per-session cap).
-  let targets = weeklyTargets(profile, plan.volume, secPerSet);
+  // Without a measured pace, sets take longer (2-3 min rests on big lifts, warm-ups).
+  let targets = weeklyTargets(profile, plan.volume, perLift ? Math.round(secPerSet * 1.2) : secPerSet);
   const easing = plan.easeWeek && String(plan.easeWeek) === wk;
   const ease = (easing ? 0.7 : 1) * (deload ? DELOAD_SETS : 1);
+  // A goal can't be more than this split's sessions can hold (10 sets per
+  // muscle per session): push/pull/legs on 6 days trains each muscle twice.
+  for (const m of Object.keys(MUSCLES)) {
+    const freq = sequenceTypes(split, 0, daysPerWeek).filter(t => PLAN_DAYS[t].muscles.includes(m)).length;
+    if (freq) targets[m] = Math.min(targets[m], freq * PER_SESSION_CAP);
+  }
   // The usual weekly goal per muscle (before any mid-week-start scaling).
   const goals = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * ease)]));
   // Smallest useful dose per session: half of a normal session's share, at

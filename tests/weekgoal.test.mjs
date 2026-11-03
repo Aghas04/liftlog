@@ -54,3 +54,16 @@ test('last week\'s make-up sets show in the goal, so the card still adds up', ()
   const vol = weekVolume(wk, [], lookup);
   for (const m of MAJOR) assert.ok(Math.abs(vol[m].planned - vol[m].goal) <= 1, `${m}: ${vol[m].planned}/${vol[m].goal}`);
 });
+
+test('advanced plans aim for the most growth: up to 30 sets with long sessions, never past what the split can hold', () => {
+  const plan = (minutes, splitId) => createPlan({ profile: { days: [0, 1, 2, 3, 4, 5], minutes, level: 'advanced', goal: 'muscle', priority: [], equipment: 'gym', activities: [], avoid: [] }, splitId, exercises: ctx.exercises, usage: {}, workouts: [], lookup, now: MON - 3600e3 });
+  const long = currentWeek(plan(150, 'upper_lower'), [], lookup, MON, 130, ctx);
+  for (const m of MAJOR) assert.equal(long.goals[m], 30, `${m}: ${long.goals[m]}`);
+  const mid = currentWeek(plan(90, 'upper_lower'), [], lookup, MON, 130, ctx);
+  for (const m of MAJOR) assert.ok(mid.goals[m] >= 20 && mid.goals[m] < 30, `${m}: ${mid.goals[m]}`);
+  // Push/pull/legs on 6 days trains each muscle twice: at most 2 x 10 sets
+  // (shoulders train on push and pull days, so they can reach 30).
+  const ppl = currentWeek(plan(150, 'ppl'), [], lookup, MON, 130, ctx);
+  for (const m of MAJOR.filter(x => x !== 'shoulders')) assert.ok(ppl.goals[m] <= 20, `${m}: ${ppl.goals[m]}`);
+  assert.ok(ppl.goals.shoulders <= 30);
+});

@@ -1446,7 +1446,7 @@ const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const LEVEL_INFO = {
   beginner: ['Beginner', 'Under a year of steady lifting'],
   intermediate: ['Intermediate', '1–3 years of steady lifting'],
-  advanced: ['Advanced', '3+ years, progress comes slowly'],
+  advanced: ['Advanced', '3+ years, progress comes slowly. Plans aim for the most growth: up to 30 sets a muscle a week when your time allows'],
 };
 const GOAL_INFO = {
   muscle: ['Build muscle', '6–12 reps on everything'],
