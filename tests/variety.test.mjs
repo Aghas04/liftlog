@@ -82,3 +82,44 @@ test('regenerate: done workouts stay, the plan keeps its id and block, and lifts
   assert.ok(kept.length >= doneIds.size * 0.6, `kept ${kept.length} of ${doneIds.size} lifts you did`);
   void doneDay;
 });
+
+test('each day gets its own main lift, and at least one day leads with a free-weight compound (hack squat user still gets a barbell squat)', () => {
+  const exercises = EXERCISES.filter(e => e.common || e.id === 'hack_squat');
+  const free = new Set(['barbell', 'dumbbell', 'trap_bar', 'ez_bar', 'kettlebell']);
+  let hackKept = 0;
+  for (let seed = 1; seed <= 25; seed++) {
+    const slots = buildBlock({ profile, splitId: 'upper_lower', exercises, usage: { hack_squat: 8, leg_press: 4 }, workouts: [], lookup, now: MONDAY, seed });
+    const firsts = slots.lower.map(v => v.quads[0]);
+    assert.equal(new Set(firsts).size, firsts.length, `seed ${seed}: a main lift repeats: ${firsts.join(', ')}`);
+    assert.ok(firsts.some(id => free.has(lookup(id).equipment) && lookup(id).compound), `seed ${seed}: no free-weight squat: ${firsts.join(', ')}`);
+    if (firsts.includes('hack_squat')) hackKept++;
+  }
+  assert.ok(hackKept >= 20, 'the lift you use stays on one of the days');
+});
+
+test('strength goal: the same heavy, loadable main lift on every version of a day', () => {
+  const sp = { ...profile, goal: 'strength' };
+  for (let seed = 1; seed <= 15; seed++) {
+    const slots = buildBlock({ profile: sp, splitId: 'upper_lower', exercises: EXERCISES.filter(e => e.common), usage: {}, workouts: [], lookup, now: MONDAY, seed });
+    for (const [type, m] of [['upper', 'chest'], ['lower', 'quads']]) {
+      const firsts = slots[type].map(v => v[m][0]);
+      assert.equal(new Set(firsts).size, 1, `seed ${seed} ${m}: ${firsts.join(', ')}`);
+      assert.ok(['barbell', 'trap_bar', 'smith', 'machine', 'plate_loaded'].includes(lookup(firsts[0]).equipment), `${m}: ${firsts[0]}`);
+    }
+  }
+});
+
+test('home plans only use what that space has', async () => {
+  const { needsOf } = await import('../js/equipment.js');
+  const { EQUIPMENT_PROFILES } = await import('../js/data.js');
+  for (const eq of ['free', 'dumbbells']) {
+    const gear = new Set(EQUIPMENT_PROFILES[eq].gear);
+    for (let seed = 1; seed <= 10; seed++) {
+      const slots = buildBlock({ profile: { ...profile, equipment: eq, days: [0, 1, 3, 4] }, splitId: 'upper_lower', exercises: EXERCISES, usage: {}, workouts: [], lookup, now: MONDAY, seed });
+      for (const id of allIds(slots)) assert.ok(needsOf(lookup(id)).every(g => gear.has(g)), `${eq}: ${lookup(id).name} needs ${needsOf(lookup(id)).join('+')}`);
+    }
+  }
+  // A saved equipment setup works for plans too.
+  const slots = buildBlock({ profile: { ...profile, gear: ['dumbbell'], days: [0, 1, 3, 4] }, splitId: 'upper_lower', exercises: EXERCISES, usage: {}, workouts: [], lookup, now: MONDAY, seed: 2 });
+  for (const id of allIds(slots)) assert.ok(needsOf(lookup(id)).every(g => g === 'dumbbell'), lookup(id).name);
+});

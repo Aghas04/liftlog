@@ -9,8 +9,9 @@ import { howTo, videoUrl, SYMPTOMS, PAIN_SYMPTOMS } from './howto.js';
 import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion, hasPaceHistory } from './builder.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
-  dayType, visibleSplits,
+  dayType, visibleSplits, saveSoon, flushSave, loadProblem, onOutsideChange,
 } from './store.js';
+import { APP_VERSION } from './version.js';
 import {
   suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
   personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor, deloadSuggestion, deloadSetCount, retargetFrom, workWeightOf,
@@ -25,7 +26,7 @@ import {
   recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets,
   regionSets, regionTargets, regionLastDirect, neglectedRegions, DIRECT, weekKey as planWeekKey,
 } from './insights.js';
-import { listPhotos, photoBlob, addPhoto, deletePhoto } from './photos.js';
+import { listPhotos, photoBlob, addPhoto, deletePhoto, putPhoto } from './photos.js';
 import { workoutCard, shareOrDownload } from './share.js';
 import { readHealthExport } from './healthimport.js';
 import { lineChart } from './charts.js';
@@ -131,9 +132,11 @@ const fmtK = v => (v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? Math.round
 
 // Undo: snapshot the whole state before a destructive change.
 let undoSnap = null;
+let undoAfter = null;
 function withUndo(label, fn) {
   undoSnap = JSON.stringify(state);
   fn();
+  undoAfter = JSON.stringify(state);
   document.querySelector('.undo-toast')?.remove();
   const el = document.createElement('div');
   el.className = 'undo-toast';
@@ -421,7 +424,8 @@ function addExercise(exId, doRender = true) {
   }
 }
 
-function finishWorkout() {
+// at: when it ended (a workout left open: the time of its last set).
+function finishWorkout(at = null) {
   const w = state.activeWorkout;
   const prs = workoutPRs(w);
   const exercises = w.exercises
@@ -434,7 +438,7 @@ function finishWorkout() {
     }))
     .filter(e => e.sets.length);
   const saved = {
-    id: w.id, dayType: w.dayType, date: w.startedAt, finishedAt: new Date().toISOString(), exercises,
+    id: w.id, dayType: w.dayType, date: w.startedAt, finishedAt: at || new Date().toISOString(), exercises,
     ...(w.templateId ? { templateId: w.templateId } : {}),
     ...(w.templateName ? { templateName: w.templateName } : {}),
     ...(w.plan ? { plan: w.plan } : {}),
@@ -519,16 +523,16 @@ function unlockAudio() {
     if (audioCtx.state === 'suspended') audioCtx.resume();
   } catch { /* no audio */ }
 }
-function beep() {
+function beep(times = 3, vol = 0.4) {
   if (!audioCtx) return;
   try {
     const t0 = audioCtx.currentTime;
-    [0, 0.25, 0.5].forEach(off => {
+    [0, 0.25, 0.5].slice(0, times).forEach(off => {
       const o = audioCtx.createOscillator();
       const g = audioCtx.createGain();
       o.frequency.value = 880;
       g.gain.setValueAtTime(0.0001, t0 + off);
-      g.gain.exponentialRampToValueAtTime(0.4, t0 + off + 0.02);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + off + 0.02);
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + off + 0.18);
       o.connect(g).connect(audioCtx.destination);
       o.start(t0 + off);
@@ -580,7 +584,7 @@ function tick() {
   const txt = `${over ? '+' : ''}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`;
   const pct = over ? 100 : Math.max(0, Math.min(100, 100 - (left / t.total) * 100));
   // Heads-up buzz 10 seconds before the next set.
-  if (!over && left <= 10 && left > 0 && !t.warned) { t.warned = true; navigator.vibrate?.(60); }
+  if (!over && left <= 10 && left > 0 && !t.warned) { t.warned = true; if (navigator.vibrate) navigator.vibrate(60); else beep(1, 0.12); }
   // Build the controls once so taps aren't lost when the numbers update.
   if (!el.firstElementChild) {
     el.innerHTML = `
@@ -730,7 +734,9 @@ function exCard(w, ctx, ei, live) {
       // The workout-order adjustment stays out of sight mid-workout; it's one tap away.
       const target = sug.weights ? sug.weights.map((w, i) => `${weightLabel(ex, w)} × ${sug.reps[i]}`).join(' · ') : `${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}`;
       sugHtml = `<div class="suggest"><div class="target">🎯 ${target}</div><div class="why">${esc(sug.reason)}</div>
-        ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}</div>
+        ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}
+        ${sug.bigJump ? '<button class="link-btn" data-act="exMenu">Set a smaller weight step for this lift</button>' : ''}
+        ${(isBW(ex) || isAssist(ex)) && !bodyweightOn() ? '<button class="link-btn" data-act="tab" data-tab="health">Log your bodyweight for smarter targets</button>' : ''}</div>
         ${sug.stalled && !e.sets.some(s => s.done) ? `<div class="banner info stall"><div>No progress in the last 3 sessions. Pick one to get it moving again:</div>
           <div class="banner-btns"><button data-act="stallReset">10% lighter, build back up</button><button data-act="addSet">Add a set</button><button data-act="stallSwap">Swap it</button></div></div>` : ''}`;
     } else {
@@ -854,6 +860,7 @@ function viewWorkout() {
         </div>
         <div class="prog" id="setProg"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div>
       </div>
+      ${staleHtml(w)}
       ${swapOffersHtml(w)}
       ${w.exercises.map((_, i) => exCard(w, 'active', i, true)).join('')}
       ${w.exercises.length ? '' : `<div class="empty"><div class="big-ico">${dt.icon}</div>Add your first exercise to get started.</div>`}
@@ -864,7 +871,7 @@ function viewWorkout() {
   }
 
   const needsBackup = state.workouts.length >= 3 &&
-    (!state.settings.lastBackup || Date.now() - new Date(state.settings.lastBackup).getTime() > 14 * DAY);
+    (!state.settings.lastBackup || Date.now() - new Date(state.settings.lastBackup).getTime() > 7 * DAY);
   const lastOf = id => [...state.workouts].sort((a, b) => b.date.localeCompare(a.date)).find(x => x.dayType === id);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
@@ -1618,7 +1625,7 @@ function viewPlan() {
   ${week.notes.length ? `<div class="plan-notes">${week.notes.map(n => `<p>ℹ️ ${esc(n)}</p>`).join('')}</div>` : ''}
   ${vol ? `<details class="card vol-card"><summary>Sets per muscle this week</summary>
     <p class="muted small">Mon–Sun. Solid = done in any workout, light = still planned, out of your usual weekly goal.${partial ? ' Your plan started mid-week, so this week ends below the goal.' : ''}</p>${vol}
-    <p class="muted small">Small muscles also count half of the sets they get from bigger lifts (triceps from presses, for example), the way the research counts them. They can sit a little over the goal: they always keep some direct work for the parts bigger lifts miss, like the triceps long head.</p></details>` : ''}
+    <p class="muted small">Small muscles also count half of the sets they get from bigger lifts (triceps from presses, for example), the way the research counts them; glutes and shoulders get half credit from squats, lunges, deadlifts and presses. Some can sit a little over the goal: small muscles always keep some direct work for the parts bigger lifts miss, like the triceps long head.</p></details>` : ''}
   <div class="plan-actions">
     <button class="btn" data-act="planDaysSheet">📅 Change days this week</button>
     <button class="btn" data-act="planRegen">🔄 Regenerate upcoming workouts</button>
@@ -1673,6 +1680,16 @@ function learnFromWorkoutEdit(fromId, toId) {
   if (r.learned) toast(`Got it — ${exercise(r.learned).name} won't be planned anymore`);
 }
 
+// When the workout last moved: the latest ticked set, else its start.
+const lastActive = w => Math.max(new Date(w.startedAt).getTime(), ...w.exercises.flatMap(e => e.sets.filter(s => s.doneAt).map(s => new Date(s.doneAt).getTime())));
+// Left open for 3+ hours: offer to finish it as of the last set.
+function staleHtml(w) {
+  const last = lastActive(w);
+  if (Date.now() - last < 3 * 3600000 || !w.exercises.some(e => e.sets.some(s => s.done))) return '';
+  return `<div class="banner info"><div>Still training? Nothing logged since ${new Date(last).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.</div>
+    <div class="banner-btns"><button data-act="finishStale">Finish as of then</button></div></div>`;
+}
+
 // Template workouts that keep skipping regions get swap offers (today only).
 function swapOffersHtml(w) {
   if (!w.swapOffers?.length || w.exercises.some(e => e.sets.some(s => s.done))) return '';
@@ -1709,6 +1726,7 @@ function setupDraft() {
     level: p?.level || (state.workouts.length > 60 ? 'intermediate' : 'beginner'),
     goal: p?.goal || 'muscle',
     equipment: p?.equipment || 'gym',
+    gearId: p?.gearId || null,
     priority: p ? [...(p.priority || [])] : [],
     avoid: p ? [...(p.avoid || [])] : [],
     activities: p ? (p.activities || []).map(a => ({ ...a })) : [],
@@ -1718,6 +1736,7 @@ function setupDraft() {
 }
 const setupProfile = d => ({
   days: [...d.days].sort((a, b) => a - b), minutes: d.minutes, level: d.level, goal: d.goal, equipment: d.equipment,
+  ...(d.gearId && (state.settings.gearSetups || []).find(g => g.id === d.gearId) ? { gear: [...state.settings.gearSetups.find(g => g.id === d.gearId).gear], gearId: d.gearId } : {}),
   priority: d.priority, avoid: d.avoid, activities: d.activities,
 });
 
@@ -1740,7 +1759,7 @@ function setupHtml() {
       <div class="field"><span>Main goal</span><div class="choices">${Object.entries(GOAL_INFO).map(([k, v]) => choice('suGoal', k, v, d.goal === k)).join('')}</div></div>`;
   } else if (d.step === 2) {
     const byMuscle = Object.entries(MUSCLES).map(([m, n]) => `<optgroup label="${n}">${allExercises().filter(e => e.muscle === m && !d.avoid.includes(e.id)).map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</optgroup>`).join('');
-    body = `<div class="field"><span>Equipment you have</span><div class="choices">${Object.entries(EQUIPMENT_PROFILES).map(([k, v]) => choice('suEquip', k, [v.name, v.allows.map(a => EQUIPMENT[a].name).join(', ')], d.equipment === k)).join('')}</div></div>
+    body = `<div class="field"><span>Equipment you have</span><div class="choices">${Object.entries(EQUIPMENT_PROFILES).map(([k, v]) => choice('suEquip', k, [v.name, v.desc], d.equipment === k && !d.gearId)).join('')}${(state.settings.gearSetups || []).map(g => choice('suGear', g.id, [g.name, gearSummary(g)], d.gearId === g.id)).join('')}</div></div>
       <div class="field"><span>Priority muscles (up to 2, optional) — they get extra sets and go first</span>
         <div class="chips">${Object.entries(MUSCLES).map(([m, n]) => chip('suPri', m, n, d.priority.includes(m))).join('')}</div></div>
       <div class="field"><span>Lifts to avoid (injuries, no machine, dislike)</span>
@@ -2182,7 +2201,9 @@ ui.build = { mode: 'auto', unit: 'sets', sets: 18, minutes: 60, muscles: [], see
 
 function buildBudget() {
   const b = ui.build;
-  return b.unit === 'sets' ? b.sets : setsForMinutes(b.minutes, paceFromHistory(state.workouts, state.settings.defaultRest));
+  // No measured pace yet: real rests on big lifts and warm-ups make sets take longer.
+  const p = paceFromHistory(state.workouts, state.settings.defaultRest);
+  return b.unit === 'sets' ? b.sets : setsForMinutes(b.minutes, hasPaceHistory(state.workouts) ? p : Math.round(p * 1.2));
 }
 
 // Muscles your plan trains tomorrow (0.5) and the day after (0.75): the
@@ -2190,7 +2211,7 @@ function buildBudget() {
 function soonMuscles() {
   if (!state.plan || isPaused(state.plan)) return {};
   const out = {};
-  const day = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  const day = n => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
   try {
     for (const d of planUpcoming().days) {
       const f = d.date === day(1) ? 0.5 : d.date === day(2) ? 0.75 : null;
@@ -2448,6 +2469,7 @@ function sheetHtml() {
       const mins = Math.round((Date.now() - new Date(w.startedAt).getTime()) / 60000);
       const prs = workoutPRs(w);
       const undone = w.exercises.reduce((n, e) => n + e.sets.filter(x => !x.done).length, 0);
+      const typed = w.exercises.reduce((n, e) => n + e.sets.filter(x => !x.done && x.reps > 0 && (x.weight != null || isBW(exercise(e.exId)))).length, 0);
       return `<h2>Finish workout?</h2>
         <div class="stats">
           <div class="stat"><b>${mins}</b><span>minutes</span></div>
@@ -2456,6 +2478,7 @@ function sheetHtml() {
         </div>
         ${prs.length ? `<div class="card pr-list"><div class="muted small">🎉 New strength PRs</div>${prs.map(p => `<div class="pr"><span>${esc(p.name)}</span><b>${Math.round(p.now)} e1RM</b></div>`).join('')}</div>` : ''}
         ${undone ? `<p class="muted small">${undone} unticked set${undone > 1 ? 's' : ''} won't be saved.</p>` : ''}
+        ${typed ? `<button class="btn" data-act="finishTyped">Tick the ${typed} set${typed > 1 ? 's' : ''} you filled in, then save</button>` : ''}
         <div class="stack">
           <button class="btn primary" data-act="finish" ${done ? '' : 'disabled style="opacity:.5"'}>Save workout</button>
           <button class="btn" data-act="closeSheet">Keep going</button>
@@ -2624,6 +2647,11 @@ function sheetHtml() {
         <div class="stack"><button class="btn primary" data-act="joinStart" ${busy ? 'disabled style="opacity:.5"' : ''}>Start this workout</button>
           <button class="btn" data-act="closeSheet">Not now</button></div>`;
     }
+    case 'recover':
+      return `<h2>⚠️ Your saved data couldn't be read</h2>
+        <p class="muted small">The app started empty, but the unreadable copy is kept safe on this phone. Restore your latest backup file to get your workouts back.</p>
+        <div class="stack"><button class="btn primary" data-act="import">Restore a backup file</button>
+          <button class="btn" data-act="closeSheet">Continue for now</button></div>`;
     case 'install': {
       const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
       return `<h2>📲 Add LiftLog to your Home Screen</h2>
@@ -2779,8 +2807,9 @@ function sheetHtml() {
       const look = `<div class="field"><span>Accent color</span>
           <div class="swatches">${Object.entries(ACCENTS).map(([k, hex]) => `<button data-act="accent" data-v="${k}" class="${(state.settings.accent || 'lime') === k ? 'on' : ''}" style="--sw:${hex}" aria-label="${k}"></button>`).join('')}</div></div>`;
       const data = `
-        <p class="muted small">Your data is stored only on this phone. Save a backup file to Files or iCloud Drive now and then.
+        <p class="muted small">Your data is stored only on this phone. Save a backup file to Files or iCloud Drive about once a week. Backups include your progress photos.
           ${state.settings.lastBackup ? `Last backup: ${relDays(state.settings.lastBackup)}.` : 'No backup yet.'}</p>
+        <p class="muted small">Using ${(JSON.stringify(state).length / 1e6).toFixed(1)} MB of about 5 MB for workouts and settings (photos are stored separately).</p>
         <div class="stack">
           <button class="btn primary" data-act="export">Export backup</button>
           <button class="btn" data-act="import">Import backup</button>
@@ -2798,7 +2827,8 @@ function sheetHtml() {
         ${sec('gym', '⭐ My gym & exercises', gym, gymCount ? String(gymCount) : '')}
         ${sec('look', '🎨 Look', look)}
         ${sec('data', '💾 Data & backup', data)}
-        ${sec('about', 'ℹ️ About', about)}`;
+        ${sec('about', 'ℹ️ About', about, APP_VERSION)}
+        <p class="muted small version">LiftLog ${APP_VERSION}</p>`;
     }
   }
   return '';
@@ -2851,8 +2881,15 @@ async function exportCsvFile() {
 }
 
 // ---------- Backup ----------
+const blobToDataUrl = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
+
 async function exportBackup() {
-  const data = JSON.stringify({ ...state, exportedAt: new Date().toISOString() }, null, 1);
+  // Progress photos live outside the main data; put them in the file too.
+  let photos = [];
+  try {
+    for (const p of await listPhotos()) { const b = await photoBlob(p.id); if (b) photos.push({ id: p.id, date: p.date, data: await blobToDataUrl(b) }); }
+  } catch { photos = []; }
+  const data = JSON.stringify({ ...state, photos, exportedAt: new Date().toISOString() }, null, 1);
   const name = `liftlog-backup-${todayStr()}.json`;
   const file = new File([data], name, { type: 'application/json' });
   try {
@@ -2874,18 +2911,41 @@ async function exportBackup() {
   }
 }
 
+// A backup file, checked before it replaces anything: the right shape, and
+// ids that are safe to put in the page (a crafted file can't inject code).
+const SAFE_ID = /^[\w.-]{1,80}$/;
+function cleanBackup(data) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.workouts)) throw new Error('Not a LiftLog backup file');
+  const okEx = e => e && SAFE_ID.test(e.exId) && Array.isArray(e.sets);
+  data.workouts = data.workouts
+    .filter(w => w && typeof w.date === 'string' && !Number.isNaN(Date.parse(w.date)) && Array.isArray(w.exercises))
+    .map(w => ({ ...w, id: SAFE_ID.test(w.id) ? w.id : uid(), exercises: w.exercises.filter(okEx) }));
+  data.customExercises = (Array.isArray(data.customExercises) ? data.customExercises : [])
+    .filter(c => c && SAFE_ID.test(c.id) && typeof c.name === 'string' && MUSCLES[c.muscle]);
+  data.templates = (Array.isArray(data.templates) ? data.templates : [])
+    .filter(t => t && SAFE_ID.test(t.id) && Array.isArray(t.exercises)).map(t => ({ ...t, exercises: t.exercises.filter(e => e && SAFE_ID.test(e.exId)) }));
+  if (data.activeWorkout && !(Array.isArray(data.activeWorkout.exercises) && data.activeWorkout.exercises.every(okEx))) data.activeWorkout = null;
+  data.photos = (Array.isArray(data.photos) ? data.photos : []).filter(p => p && SAFE_ID.test(p.id) && typeof p.data === 'string' && p.data.startsWith('data:image/'));
+  return data;
+}
+
 $('#importFile').addEventListener('change', async ev => {
   const f = ev.target.files[0];
   ev.target.value = '';
   if (!f) return;
   try {
-    const data = JSON.parse(await f.text());
-    if (!Array.isArray(data.workouts)) throw new Error('Not a LiftLog backup file');
-    if (!confirm(`Replace all current data with this backup (${data.workouts.length} workouts)?`)) return;
+    const data = cleanBackup(JSON.parse(await f.text()));
+    if (!confirm(`Replace all current data with this backup (${data.workouts.length} workouts${data.photos?.length ? `, ${data.photos.length} photos` : ''})?`)) return;
+    const photos = data.photos || [];
     delete data.exportedAt;
-    replaceState(data);
+    delete data.photos;
+    // Keep what was here, so a wrong file can be undone.
+    try { localStorage.setItem('liftlog.beforeRestore', JSON.stringify(state)); } catch { /* full: the undo below still works */ }
+    withUndo('Backup restored', () => replaceState(data));
+    for (const p of photos) {
+      try { await putPhoto(p.id, p.date, await (await fetch(p.data)).blob()); } catch { /* skip a broken photo */ }
+    }
     closeSheet();
-    toast('Backup restored');
     render();
   } catch (e) {
     alert('Could not import: ' + e.message);
@@ -3164,6 +3224,7 @@ const actions = {
       if (c.s.reps == null || c.s.reps <= 0) { toast('Enter reps first'); return; }
       if (c.s.weight == null && !isBW(c.ex)) { toast('Enter weight first'); return; }
       c.s.done = true;
+      c.s.doneAt = new Date().toISOString();
       if (c.ctx === 'active' && !c.s.warmup) {
         const best = bestBefore(c);
         pr = best != null && epley(loadOf(c.ex, c.s.weight), c.s.reps) > best + 0.01;
@@ -3228,6 +3289,7 @@ const actions = {
   setStandards(el) { state.settings.standards = el.dataset.v; save(); render(); },
   undo() {
     if (!undoSnap) return;
+    if (JSON.stringify(state) !== undoAfter && !confirm('Undo will also undo what you changed since. Undo anyway?')) return;
     replaceState(JSON.parse(undoSnap));
     undoSnap = null;
     document.querySelector('.undo-toast')?.remove();
@@ -3481,7 +3543,9 @@ const actions = {
   suMin(el) { ui.setup.minutes = +el.dataset.v; renderSheet(); },
   suLevel(el) { ui.setup.level = el.dataset.v; renderSheet(); },
   suGoal(el) { ui.setup.goal = el.dataset.v; renderSheet(); },
-  suEquip(el) { ui.setup.equipment = el.dataset.v; renderSheet(); },
+  suEquip(el) { ui.setup.equipment = el.dataset.v; ui.setup.gearId = null; renderSheet(); },
+  // One of your saved equipment setups (Build today's workout) for the plan.
+  suGear(el) { ui.setup.equipment = 'gym'; ui.setup.gearId = el.dataset.v; renderSheet(); },
   suPri(el) {
     const d = ui.setup;
     const m = el.dataset.v;
@@ -3966,6 +4030,7 @@ const actions = {
     if (st.reps == null || st.reps <= 0) { toast('Enter reps first'); return; }
     if (st.weight == null && !isBW(ex)) { toast(isAssist(ex) ? 'Enter assistance first' : 'Enter weight first'); return; }
     st.done = true;
+    st.doneAt = new Date().toISOString();
     const c = { ctx: 'active', w, e, s: st, ex };
     let pr = false;
     if (!st.warmup) { const best = bestBefore(c); pr = best != null && epley(loadOf(ex, st.weight), st.reps) > best + 0.01; }
@@ -3994,6 +4059,15 @@ const actions = {
 
   finishSheet() { openSheet({ type: 'finish' }); },
   finish() { finishWorkout(); },
+  finishStale() { finishWorkout(new Date(lastActive(state.activeWorkout)).toISOString()); },
+  // Sets with reps typed in but not ticked: tick them, then save.
+  finishTyped() {
+    for (const e of state.activeWorkout.exercises) {
+      const ex = exercise(e.exId);
+      for (const s of e.sets) if (!s.done && s.reps > 0 && (s.weight != null || isBW(ex))) { s.done = true; s.doneAt = new Date().toISOString(); }
+    }
+    finishWorkout();
+  },
   discard() {
     ui.focus = false;
     if (!confirm('Discard this workout? Nothing from it will be saved.')) return;
@@ -4033,6 +4107,7 @@ const actions = {
   defaultRest(el) { state.settings.defaultRest = +el.dataset.v; save(); renderSheet(); },
   export() { exportBackup(); },
   import() { $('#importFile').click(); },
+  reloadApp() { flushSave(); location.reload(); },
   wipe() {
     if (!confirm('Delete ALL workouts, bodyweight and settings from this phone?')) return;
     if (!confirm('Are you sure? This cannot be undone unless you have a backup.')) return;
@@ -4099,7 +4174,7 @@ document.addEventListener('input', ev => {
       if (e.suggestion && st.weight != null) { const reps = targetFor(e.suggestion, ex, st.weight, e.sets.filter(x => !x.warmup).indexOf(st), bodyweightOn()); if (reps) st.target = { weight: st.weight, reps }; }
       focusShowGoal(ex, st);
     } else st.reps = v == null ? null : Math.round(v);
-    save();
+    saveSoon();
     return;
   }
   if (el.id === 'swapSearch') { ui.sheet.q = el.value; $('#swapList').innerHTML = swapListHtml(); return; }
@@ -4116,7 +4191,7 @@ document.addEventListener('input', ev => {
     if (v != null && Number.isNaN(v)) return;
     c.s[f] = v;
     if (f === 'weight') retarget(c);
-    save();
+    saveSoon();
     syncRow(c.row, c.s);
   }
 });
@@ -4188,7 +4263,27 @@ document.addEventListener('focusin', ev => {
 });
 
 // ---------- Boot ----------
+// Ask the browser to keep this app's data (helps on Android; iPhone keeps it
+// for Home Screen apps).
+navigator.storage?.persist?.().catch(() => {});
+// Save anything typed when the app goes to the background.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
+window.addEventListener('pagehide', flushSave);
+// Another LiftLog window saved: show its data instead of saving over it.
+onOutsideChange(() => { render(); toast('Updated from your other LiftLog window'); });
+// Saved data couldn't be read: say so, and offer a backup restore.
+if (loadProblem) setTimeout(() => openSheet({ type: 'recover' }), 300);
+
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  // A new version took over while the app was open: offer to reload into it.
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || document.querySelector('.update-banner')) return;
+    const el = document.createElement('div');
+    el.className = 'undo-toast update-banner';
+    el.innerHTML = '<span>A new version of LiftLog is ready</span><button data-act="reloadApp">Reload</button>';
+    document.body.appendChild(el);
+  });
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 navigator.storage?.persist?.().catch(() => {});
@@ -4209,7 +4304,7 @@ if (!isStandalone() && !state.settings.installSeen && isPhone()) ui.bootQueue.pu
   if (!shared) { toast("That workout link didn't work"); return; }
   const p = pool();
   const resolved = resolveShared(shared, {
-    has: id => allExercises().some(e => e.id === id), customs: state.customExercises, blocked: blocked(), muscles: MUSCLES,
+    has: id => allExercises().some(e => e.id === id), customs: state.customExercises, blocked: blocked(), muscles: MUSCLES, equipment: EQUIPMENT,
     // Same muscle part first: from your usual lifts, else anywhere in the library.
     replace: id => {
       const plan = state.plan || { profile: { equipment: 'gym', level: 'intermediate' } };

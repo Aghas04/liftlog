@@ -22,8 +22,9 @@ function check(level, minutes, days, splitId, workouts, now, plan) {
     if (!v.goal) continue;
     const total = v.done + v.planned;
     const label = `${level} ${minutes}m ${days.length}d ${splitId} ${m}: ${total}/${v.goal}`;
-    // Small muscles may sit a little over: they keep 40% of their goal as direct work.
-    const over = MAJOR.includes(m) ? 1 : Math.max(1, Math.ceil(v.goal * 0.35));
+    // Small muscles may sit a little over (they keep 40% of their goal as direct
+    // work), and so may glutes and shoulders (half credit from squats, presses, rows).
+    const over = MAJOR.includes(m) && !['glutes', 'shoulders'].includes(m) ? 1 : Math.max(1, Math.ceil(v.goal * 0.35));
     // After extra work, a planned lift never goes below 2 sets (the smallest useful dose).
     const atMin = wk.days.filter(x => x.kind === 'train').every(x => x.session.items.filter(it => it.muscle === m).every(it => it.sets <= 2));
     assert.ok(total <= v.goal + over || (workouts.length && atMin), `over: ${label}`);

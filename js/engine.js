@@ -98,6 +98,9 @@ export const SYNERGY = {
   glutes: ['quads', 'hamstrings'],
   calves: [],
   abs: [],
+  // Squats, lunges and leg presses work the inner thighs; rows and curls the grip.
+  adductors: ['quads', 'glutes'],
+  forearms: ['back', 'biceps'],
 };
 const SAME = 1.5, HELPER = 0.6, OTHER = 0.1;
 
@@ -409,7 +412,13 @@ export function suggest(ex, history, opts) {
     return build(w, t, 'deload', 'Missed targets 2 sessions in a row — lighter weight to rebuild.');
   }
 
-  if (shape) return shaped(1, 'reps', 'Same set pattern as last time: one more rep per set, and a step up on sets that reached the top of the range.');
+  // Stalled: the last 3 sessions didn't beat the best of the ones before.
+  const fr = valid.map(fresh);
+  const stalled = valid.length >= 5 && Math.max(...fr.slice(-3)) <= 1.005 * Math.max(...fr.slice(0, -3).slice(-6));
+  if (shape) {
+    const out = shaped(1, 'reps', 'Same set pattern as last time: one more rep per set, and a step up on sets that reached the top of the range.');
+    return stalled ? { ...out, stalled: true } : out;
+  }
 
   let w = topWeight;
   let t = Math.round(repsAt(est, loadOf(w))) + 1;
@@ -446,7 +455,7 @@ export function suggest(ex, history, opts) {
     const ext = zMax + 3;
     if (!isBW && !assisted && !ex.compound && w > 0 && (w2 - w) / w > 0.15 && bestRepsAt(w) < ext) {
       const r = Math.min(ext, Math.max(t, bestRepsAt(w) + 1));
-      return { ...build(w, r, 'reps', `Next weight is a big jump (+${Math.round(((w2 - w) / w) * 100)}%) — add reps up to ${ext} first. A smaller step for this lift helps if your gym has one.`, 1), zone: [zMin, ext] };
+      return { ...build(w, r, 'reps', `Next weight is a big jump (+${Math.round(((w2 - w) / w) * 100)}%) — add reps up to ${ext} first. A smaller step for this lift helps if your gym has one.`, 1), zone: [zMin, ext], bigJump: true };
     }
     if (!isBW) {
       // Weighted lifts never go past 12, even when the next weight is a big
@@ -478,9 +487,6 @@ export function suggest(ex, history, opts) {
     }
   }
 
-  // Stalled: the last 3 sessions didn't beat the best of the ones before.
-  const fr = valid.map(fresh);
-  const stalled = valid.length >= 5 && Math.max(...fr.slice(-3)) <= 1.005 * Math.max(...fr.slice(0, -3).slice(-6));
   const missedLast = sessionMissed(last);
   // When the target sits below last time's reps (it comes later in today's
   // workout), don't claim it's "one more than last time".

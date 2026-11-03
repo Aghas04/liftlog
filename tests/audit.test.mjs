@@ -122,3 +122,37 @@ test('plan time: without a measured pace each lift is timed by its own rest plus
   const per = buildSession({ type: 'upper', variant: slots.upper[0], setsByMuscle, lookup, profile, secPerSet: 130, restSec: 90, perLift: true });
   assert.ok(per.estMinutes > avg.estMinutes, `${per.estMinutes} vs ${avg.estMinutes}`);
 });
+
+test('share links: ids that could inject code are dropped; rep ranges and equipment are checked', async () => {
+  const { packWorkout, unpackWorkout, resolveShared } = await import('../js/together.js');
+  const enc = obj => Buffer.from(JSON.stringify(obj)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const evil = unpackWorkout(enc({ v: 1, n: 'x', e: [{ i: 'x" onmouseover="alert(1)', s: 3 }, { i: 'bench_press', s: 3, z: [0, 999] }] }));
+  assert.equal(evil.exercises.length, 1, 'the unsafe id is gone');
+  assert.equal(evil.exercises[0].zone, undefined, 'a silly rep range is ignored');
+  const custom = unpackWorkout(enc({ v: 1, n: 'x', e: [{ i: 'c_abc', s: 3, c: { n: 'My Lift', m: 'chest', q: '<b>', k: true } }] }));
+  const r = resolveShared(custom, { has: () => false, customs: [{ id: 'c_abc', name: 'Other', muscle: 'back' }], blocked: [], muscles: { chest: 'Chest' }, equipment: { machine: {}, barbell: {} }, replace: () => null });
+  assert.equal(r.newCustoms[0].equipment, 'machine');
+  assert.notEqual(r.newCustoms[0].id, 'c_abc', 'an id already used here gets its own');
+  void packWorkout;
+});
+
+test('a plan rebuilt mid-week after Monday\'s workout lands on the full goal, not over it', async () => {
+  const { createPlan, currentWeek, weekVolume } = await import('../js/plancontrol.js');
+  const MON = new Date(2026, 10, 2, 7).getTime();
+  const profile = { days: [0, 1, 2, 3, 4, 5], minutes: 120, level: 'advanced', goal: 'muscle', priority: [], equipment: 'gym', activities: [], avoid: [] };
+  const ctx = { exercises: EXERCISES.filter(e => e.common), lookup, blocked: [], usage: {} };
+  const mon = { id: 'm', date: new Date(MON + 3600e3).toISOString(), exercises: [['bench_press', 4], ['incline_bench', 4], ['lat_pulldown', 4], ['cable_row', 4], ['overhead_press', 4], ['lateral_raise', 4], ['db_curl', 3], ['rope_pushdown', 3]].filter(([id]) => lookup(id)).map(([exId, n]) => ({ exId, sets: Array.from({ length: n }, () => ({ weight: 100, reps: 10, done: true })) })) };
+  const tue = MON + DAY + 3600e3;
+  const plan = createPlan({ profile, splitId: 'upper_lower', exercises: ctx.exercises, usage: {}, workouts: [mon], lookup, now: tue });
+  const wk = currentWeek(plan, [mon], lookup, tue, 130, ctx);
+  const v = weekVolume(wk, [mon], lookup);
+  for (const m of ['chest', 'back']) assert.ok(v[m].done + v[m].planned <= v[m].goal + 1, `${m}: ${v[m].done}+${v[m].planned}/${v[m].goal}`);
+  assert.ok(v.chest.done >= 8, 'Monday counts');
+});
+
+test('an unknown exercise id counts toward no muscle', async () => {
+  const { muscleSets } = await import('../js/insights.js');
+  const look = id => lookup(id) || { id, name: 'Unknown exercise', muscle: 'back', unknown: true };
+  const w = [{ date: ago(1), exercises: [{ exId: 'gone_123', sets: [{ weight: 100, reps: 10, done: true }] }] }];
+  assert.deepEqual(muscleSets(w, look), {});
+});

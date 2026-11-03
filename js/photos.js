@@ -48,6 +48,11 @@ async function compress(file) {
   return new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
 }
 
+/** Store an already-compressed photo as is (restoring a backup). */
+export function putPhoto(id, date, blob) {
+  return tx('readwrite', s => s.put({ id, date, blob }));
+}
+
 export async function addPhoto(file, date, id) {
   let blob;
   try { blob = await compress(file); } catch { blob = file; }

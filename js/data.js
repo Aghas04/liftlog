@@ -1,4 +1,5 @@
 // Exercise library, muscles, muscle regions and day types.
+import { fitsGear } from './equipment.js';
 import { MOVEMENTS } from './library.js';
 
 export const MUSCLES = {
@@ -204,16 +205,23 @@ for (const mv of MOVEMENTS) {
 for (const e of EXERCISES) if (!e.movement) { e.movement = e.id; e.common = true; }
 
 // What equipment each setup choice allows.
+// gear: what else the space has (see equipment.js), so a home plan never asks
+// for a bench, rack, pull-up bar or machine it doesn't have.
 export const EQUIPMENT_PROFILES = {
-  gym: { name: 'Full gym', allows: Object.keys(EQUIPMENT) },
-  free: { name: 'Barbell, dumbbells & bodyweight', allows: ['barbell', 'dumbbell', 'ez_bar', 'trap_bar', 'kettlebell', 'bodyweight'] },
-  dumbbells: { name: 'Dumbbells & bodyweight', allows: ['dumbbell', 'kettlebell', 'bodyweight'] },
+  gym: { name: 'Full gym', desc: 'Machines, cables, barbells, dumbbells', allows: Object.keys(EQUIPMENT) },
+  free: { name: 'Home gym: barbell & dumbbells', desc: 'Barbell with a rack, bench, dumbbells, pull-up bar', allows: ['barbell', 'dumbbell', 'ez_bar', 'trap_bar', 'kettlebell', 'bodyweight'], gear: ['barbell', 'dumbbell', 'ez_bar', 'trap_bar', 'kettlebell', 'bench', 'rack', 'bars'] },
+  dumbbells: { name: 'Dumbbells & a bench', desc: 'Dumbbells or kettlebells and a bench', allows: ['dumbbell', 'kettlebell', 'bodyweight'], gear: ['dumbbell', 'kettlebell', 'bench'] },
 };
 
 // The angle and position words used by search and filters.
 export const ANGLES = { flat: 'Flat', incline: 'Incline', decline: 'Decline' };
 
-export const allowedBy = (profileId, ex) => (EQUIPMENT_PROFILES[profileId] || EQUIPMENT_PROFILES.gym).allows.includes(ex.equipment);
+// equipment: a profile id, or a list of gear (a saved equipment setup).
+export function allowedBy(equipment, ex) {
+  if (Array.isArray(equipment)) return fitsGear(ex, equipment);
+  const p = EQUIPMENT_PROFILES[equipment] || EQUIPMENT_PROFILES.gym;
+  return p.allows.includes(ex.equipment) && (!p.gear || fitsGear(ex, p.gear));
+}
 
 export const regionsOf = muscle => Object.keys(REGIONS).filter(r => REGIONS[r].muscle === muscle);
 

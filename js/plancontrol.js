@@ -3,7 +3,7 @@
 // session into workout entries. Pure functions: they take and return plain
 // objects, the app does the saving.
 import { REGIONS, exerciseRegions, primaryRegion, allowedBy } from './data.js';
-import { buildBlock, planWeek, reviewBlock, applyReview, rotationOffsetFor, indirectByMuscle, PLAN_DAYS, MAJOR, splitById } from './planner.js';
+import { buildBlock, planWeek, reviewBlock, applyReview, rotationOffsetFor, indirectCredit, PLAN_DAYS, splitById } from './planner.js';
 import { workingSets } from './engine.js';
 import { DIRECT, weekKey } from './insights.js';
 
@@ -253,8 +253,9 @@ export function weekVolume(week, workouts, lookup) {
   const add = (m, key, v) => { (out[m] ||= { done: 0, planned: 0, goal: 0 })[key] += v; };
   const credit = (exId, n, key) => {
     const ex = lookup(exId);
+    if (ex.unknown) return;
     add(ex.muscle, key, n);
-    for (const [m, w] of Object.entries(indirectByMuscle(ex))) if (!MAJOR.includes(m)) add(m, key, w * n);
+    for (const [m, w] of Object.entries(indirectCredit(ex))) add(m, key, w * n);
   };
   const end = new Date(week.weekStart);
   end.setDate(end.getDate() + 7);
@@ -310,7 +311,7 @@ export function replacementFor(exId, { plan, exercises, lookup, blocked = [], us
   const region = primaryRegion(ex);
   const allowed = (type && PLAN_DAYS[type]?.only?.[ex.muscle]) || null;
   const skip = new Set([exId, ...blocked, ...exclude]);
-  const cands = exercises.filter(x => x.muscle === ex.muscle && !skip.has(x.id) && allowedBy(plan.profile.equipment, x)
+  const cands = exercises.filter(x => x.muscle === ex.muscle && !skip.has(x.id) && allowedBy(plan.profile.gear || plan.profile.equipment, x)
     && (!allowed || allowed.includes(primaryRegion(x))) && (!x.hard || plan.profile.level === 'advanced'));
   const score = x => ((exerciseRegions(x)[region] || 0) >= DIRECT ? 4 : 0) + (primaryRegion(x) === region ? 2 : 0)
     + (!!x.compound === !!ex.compound ? 1 : 0) + Math.min(usage[x.id] || 0, 10) * 0.1;
@@ -323,7 +324,7 @@ export function swapOptions(exId, { plan, exercises, lookup, blocked = [], usage
   const region = primaryRegion(ex);
   const allowed = (type && PLAN_DAYS[type]?.only?.[ex.muscle]) || null;
   const skip = new Set([exId, ...blocked, ...exclude]);
-  return exercises.filter(x => x.muscle === ex.muscle && !skip.has(x.id) && allowedBy(plan.profile.equipment, x)
+  return exercises.filter(x => x.muscle === ex.muscle && !skip.has(x.id) && allowedBy(plan.profile.gear || plan.profile.equipment, x)
     && (!allowed || allowed.includes(primaryRegion(x))))
     .sort((a, b) => ((primaryRegion(b) === region) - (primaryRegion(a) === region)) || ((usage[b.id] || 0) - (usage[a.id] || 0)) || a.name.localeCompare(b.name));
 }
@@ -373,7 +374,7 @@ function liftFor(region, m, type, plan, ctx, exclude) {
   const blockedSet = new Set([...(ctx.blocked || []), ...(plan.excluded || [])]);
   const usage = ctx.usage || {};
   return ctx.exercises
-    .filter(x => x.muscle === m && !exclude.has(x.id) && !blockedSet.has(x.id) && allowedBy(plan.profile.equipment, x)
+    .filter(x => x.muscle === m && !exclude.has(x.id) && !blockedSet.has(x.id) && allowedBy(plan.profile.gear || plan.profile.equipment, x)
       && (!only || only.includes(primaryRegion(x))) && (exerciseRegions(x)[region] || 0) >= DIRECT && (!x.hard || plan.profile.level === 'advanced'))
     .sort((a, b) => ((primaryRegion(b) === region) - (primaryRegion(a) === region)) || ((usage[b.id] || 0) - (usage[a.id] || 0)) || a.name.localeCompare(b.name))[0] || null;
 }

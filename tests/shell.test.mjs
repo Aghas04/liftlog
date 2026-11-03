@@ -15,3 +15,10 @@ test('the offline cache lists every script, and every import exists', () => {
     }
   }
 });
+
+test('the version shown in Settings matches the service worker version', async () => {
+  const fs = await import('node:fs');
+  const sw = fs.readFileSync(new URL('../sw.js', import.meta.url), 'utf8').match(/VERSION = 'liftlog-(v\d+)'/)[1];
+  const { APP_VERSION } = await import('../js/version.js');
+  assert.equal(APP_VERSION, sw);
+});

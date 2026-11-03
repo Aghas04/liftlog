@@ -22,6 +22,7 @@ export const TIPS = {
   high_row: ['Pull down and back toward your hips in an arc.', 'Squeeze the shoulder blades down at the end.', 'Keep your chest on the pad.'],
   pullover: ['Arms nearly straight, slight bend in the elbows.', 'Move only at the shoulders, feeling the lats stretch overhead.', 'Pull down to your thighs by squeezing the lats.'],
   shrug: ['Lift the shoulders straight up toward the ears.', 'Pause at the top, no rolling.', 'Arms stay long; don\'t bend the elbows.'],
+  superman: ['Lie face down, arms overhead or by your sides.', 'Lift chest and legs a few inches by squeezing the glutes and lower back; look at the floor.', 'Hold 1-2 seconds at the top, lower slowly.'],
   back_extension: ['Hinge at the hips, keeping the spine neutral.', 'Rise until your body is in a straight line; don\'t hyperextend.', 'Squeeze the glutes at the top.'],
   // Biceps
   curl: ['Elbows pinned at your sides.', 'No swinging: if you need to lean back, go lighter.', 'Lower slowly all the way to straight arms.'],

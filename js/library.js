@@ -108,6 +108,10 @@ export const MOVEMENTS = [
     ['bodyweight', 'back_extension', null], ['machine', null, 'Back Extension Machine'],
     ['plate_loaded', null, 'Plate-Loaded Back Extension'],
   ]),
+  // Lower back with no equipment at all (home plans).
+  M('superman', 'back', false, { lower_back: 0.8, glute_max: 0.3 }, {}, [
+    ['bodyweight', 'superman', 'Superman (Floor Back Extension)'],
+  ]),
 
   // ---------- Biceps ----------
   M('curl', 'biceps', false, { bi_short: 0.9, bi_long: 0.8, brachialis: 0.3 }, { position: 'standing' }, [

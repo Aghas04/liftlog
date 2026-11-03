@@ -33,19 +33,48 @@ function withDefaults(data) {
   return { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } };
 }
 
+// Set when saved data couldn't be read: the unreadable copy is kept under
+// this key so nothing is lost, and the app offers to restore a backup.
+export let loadProblem = null;
+
 export let state = load();
 
 function load() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(KEY);
+    raw = localStorage.getItem(KEY);
     if (raw) return withDefaults(JSON.parse(raw));
   } catch (e) {
     console.error('Could not load saved data', e);
+    const keep = `${KEY}.unreadable-${Date.now()}`;
+    try { localStorage.setItem(keep, raw); } catch { /* storage full: the original stays until the next save */ }
+    loadProblem = { key: keep };
   }
   return emptyState();
 }
 
+// Another tab or the Home Screen app saved: take its data, so this copy
+// doesn't save over it with older data.
+let onOutside = null;
+export const onOutsideChange = fn => { onOutside = fn; };
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', e => {
+    if (e.key !== KEY || !e.newValue) return;
+    try { state = withDefaults(JSON.parse(e.newValue)); onOutside?.(); } catch { /* ignore a half-written value */ }
+  });
+}
+
+// Typing saves a moment after you stop, not on every key; save() is immediate.
+let soon = null;
+export function saveSoon() {
+  clearTimeout(soon);
+  soon = setTimeout(save, 400);
+}
+export function flushSave() { if (soon) { clearTimeout(soon); soon = null; save(); } }
+
 export function save() {
+  clearTimeout(soon);
+  soon = null;
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch (e) {
@@ -80,7 +109,9 @@ export function allExercises() {
 }
 
 export function exercise(id) {
-  return allExercises().find(e => e.id === id) || { id, name: id, muscle: 'back', equipment: 'machine', compound: false };
+  // An id with no exercise (deleted custom lift, damaged import): shown, but
+  // counted toward no muscle's weekly sets.
+  return allExercises().find(e => e.id === id) || { id, name: 'Unknown exercise', muscle: 'back', equipment: 'machine', compound: false, unknown: true };
 }
 
 // Weight step in stored lb. A custom step only applies in the unit it was

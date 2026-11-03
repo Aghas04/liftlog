@@ -19,6 +19,8 @@ import { worthBoth } from './equipment.js';
 
 const DAY = 86400000;
 export const PER_SESSION_CAP = 10;
+const FREE_WEIGHT = new Set(['barbell', 'dumbbell', 'trap_bar', 'ez_bar', 'kettlebell']);
+const STRENGTH_EQUIP = new Set(['barbell', 'trap_bar', 'smith', 'machine', 'plate_loaded']);
 export const MAJOR = ['chest', 'back', 'quads', 'hamstrings', 'glutes', 'shoulders'];
 const ANTAGONIST = { chest: 'back', back: 'chest', biceps: 'triceps', triceps: 'biceps', quads: 'hamstrings', hamstrings: 'quads' };
 
@@ -56,7 +58,8 @@ export const LEVELS = {
 // Share of a small muscle's weekly goal that bigger lifts usually cover.
 const INDIRECT_SHARE = { biceps: 0.45, triceps: 0.45, forearms: 0.5 };
 // Small muscles already get a lot of indirect work, so they need fewer direct sets.
-const SIZE_FACTOR = { forearms: 0.5, adductors: 0.5, calves: 0.8, abs: 0.8 };
+// Abs get little extra from more volume and plenty of bracing in big lifts: kept lower.
+const SIZE_FACTOR = { forearms: 0.5, adductors: 0.5, calves: 0.8, abs: 0.6 };
 
 export const splitById = id => SPLITS.find(s => s.id === id);
 
@@ -130,7 +133,8 @@ export function weeklyTargets(profile, overrides = {}, secPerSet = 130) {
   const boost = days && capacity > total ? capacity / total : 1;
   const out = {};
   for (const m of Object.keys(MUSCLES)) {
-    out[m] = overrides[m] != null ? overrides[m] : Math.round(Math.min(base[m] * boost, volumeBounds(profile, m)[1]));
+    // Extra session time goes to the muscles that grow from it, not to abs.
+    out[m] = overrides[m] != null ? overrides[m] : Math.round(Math.min(base[m] * (m === 'abs' ? 1 : boost), volumeBounds(profile, m)[1]));
   }
   return out;
 }
@@ -227,9 +231,8 @@ export function recommendSplits(profile, opts = {}) {
     for (const m of MAJOR) freq[m] = types.filter(t => PLAN_DAYS[t].muscles.includes(m)).length;
     const fScore = m => (freq[m] === 0 ? -3 : freq[m] === 1 ? 0.5 : freq[m] <= 3 ? 1 : 0.8);
     score += MAJOR.reduce((s, m) => s + fScore(m), 0);
-    const avg = MAJOR.reduce((s, m) => s + freq[m], 0) / MAJOR.length;
     if (MAJOR.every(m => freq[m] >= 2)) reasons.push('Trains every major muscle at least twice a week');
-    else if (MAJOR.some(m => freq[m] === 1)) reasons.push(`Some muscles only once a week (avg ${avg.toFixed(1)}×)`);
+    else if (MAJOR.some(m => freq[m] === 1)) reasons.push(`${MAJOR.filter(m => freq[m] === 1).map(m => MUSCLES[m]).join(', ')}: only once in some weeks, so their weekly goal won't fit those weeks`);
     // Per-session load: weekly target / frequency must fit under the cap.
     const over = MAJOR.filter(m => freq[m] && targets[m] / freq[m] > PER_SESSION_CAP);
     if (over.length) { score -= over.length; reasons.push(`${over.map(m => MUSCLES[m]).join(', ')} would need over ${PER_SESSION_CAP} sets in one session`); }
@@ -269,6 +272,7 @@ export function buildBlock(input) {
   const usedVersions = exercises.filter(e => usage[e.id] && e.movement);
   const plainSwitch = ex => !usage[ex.id] && usedVersions.some(u => u.movement === ex.movement && !worthBoth(u, ex));
   const moveOf = id => lookup(id)?.movement;
+  const strength = profile.goal === 'strength';
   for (const type of [...new Set(split.rotation)]) {
     const day = PLAN_DAYS[type];
     slots[type] = [];
@@ -277,7 +281,7 @@ export function buildBlock(input) {
       const variant = {};
       for (const m of day.muscles) {
         const allowedRegions = day.only?.[m] || regionsOf(m);
-        const cands = exercises.filter(ex => ex.muscle === m && allowedBy(profile.equipment, ex) && !blockedSet.has(ex.id)
+        const cands = exercises.filter(ex => ex.muscle === m && allowedBy(profile.gear || profile.equipment, ex) && !blockedSet.has(ex.id)
           && allowedRegions.includes(primaryRegion(ex)));
         if (!cands.length) continue;
         const ordered = [...allowedRegions].sort((a, b) => REGIONS[b].size - REGIONS[a].size);
@@ -301,7 +305,8 @@ export function buildBlock(input) {
             if (ex.regions) for (const r of allowedRegions) s += (regs[r] || 0) * (neglect.has(r) ? 2 : 1);
             else s += 1;
             if (usage[ex.id]) s += 2 + Math.min(usage[ex.id], 10) * 0.15;
-            if (main === emphasis) s += 2.5;
+            // (Strength main lifts stay put; other days emphasize different parts.)
+            if (main === emphasis && !(strength && j === 0 && MAJOR.includes(m))) s += 2.5;
             if (j === 0 && ex.compound && MAJOR.includes(m)) s += 3;
             if (used.has(main)) s -= 6;
             if (ex.hard && profile.level !== 'advanced') s -= 5;              // e.g. Nordic curls: advanced only
@@ -309,7 +314,17 @@ export function buildBlock(input) {
             // A/B/C variants differ by movement, or by a version that trains it
             // differently (dumbbell vs barbell incline). The same lift again beats a
             // version with nothing new (dumbbell vs machine hip thrust).
-            if (j === 0 && (firstPicks[m] || []).includes(ex.id)) s -= 1.5;
+            const earlier = firstPicks[m] || [];
+            if (strength && j === 0 && MAJOR.includes(m)) {
+              // Strength: practice the same main lift 2-3 times a week, and make it one
+              // you can load heavy in small steps (barbell, trap bar, smith, machine).
+              if (earlier.includes(ex.id)) s += 6;
+              s += STRENGTH_EQUIP.has(ex.equipment) && ex.compound ? 2 : -3;
+            } else if (j === 0 && earlier.includes(ex.id)) s -= 4; // muscle: each day its own main lift
+            // At least one day leads with a free-weight compound (stability, strength carry-over).
+            if (!strength && j === 0 && v > 0 && ex.compound && FREE_WEIGHT.has(ex.equipment) && MAJOR.includes(m)
+              && earlier.length && earlier.every(id => !FREE_WEIGHT.has(lookup(id)?.equipment))
+              && !earlier.some(id => moveOf(id) === ex.movement && !worthBoth(lookup(id), ex))) s += 2.5;
             else if (j === 0 && ex.movement && (firstPicks[m] || []).some(id => moveOf(id) === ex.movement && !worthBoth(lookup(id), ex))) s -= 5;
             else if (j === 0 && (firstPicks[m] || []).some(id => worthBoth(lookup(id), ex))) s += 2.5; // the other version on another day
             if (plainSwitch(ex)) s -= 4;                                    // stick with the version you use
@@ -351,6 +366,25 @@ export function indirectByMuscle(ex) {
 }
 
 /**
+ * Half-set credit an exercise gives muscles other than its own, the way the
+ * volume research counts sets (Pelland 2024). Small muscles: any helper work
+ * (triceps in presses). Big muscles: only real overlap (glutes in squats,
+ * front delts in bench, rear delts in rows); low-back work in hinges doesn't
+ * count toward back, which you train for lats and upper back.
+ */
+export function indirectCredit(ex) {
+  const out = {};
+  for (const [r, w] of Object.entries(exerciseRegions(ex))) {
+    const m = REGIONS[r].muscle;
+    if (m === ex.muscle || w >= DIRECT) continue;
+    if (MAJOR.includes(m) && (w < 0.4 || r === 'lower_back')) continue;
+    out[m] = (out[m] || 0) + w;
+  }
+  for (const m of Object.keys(out)) out[m] = Math.min(0.5, out[m]);
+  return out;
+}
+
+/**
  * Build one session: sets per muscle -> exercises with sets, ordered, with
  * main lifts flagged and supersets/trims applied to fit the time limit.
  */
@@ -379,16 +413,19 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
   }
   // Fit the time limit: superset unrelated isolation lifts, then trim.
   const limit = (profile.minutes || 60) * 60;
-  const WORK_SEC = 40, WARMUP_SEC = 150;
-  const perSet = it => (perLift ? WORK_SEC + restSeconds(lookup(it.exId), { base: restSec, zone: it.main ? [3, 6] : null }) : secPerSet);
+  // Work per set, ramp-up sets before the first big lifts, moving to the next exercise.
+  const WORK_SEC = 40, WARMUP_SEC = 150, CHANGE_SEC = 45;
+  // One-arm and single-leg lifts do the work twice per set.
+  const perSet = it => (perLift ? WORK_SEC * (lookup(it.exId).unilateral ? 2 : 1) + restSeconds(lookup(it.exId), { base: restSec, zone: it.main ? [3, 6] : null }) : secPerSet);
   const timeOf = () => {
     // Warm-ups: ramp-up sets before the first two big lifts; later lifts start warm.
     const warm = items.filter(it => it.core && it.compound).slice(0, 2);
-    let t = items.reduce((s, it) => s + it.sets * perSet(it) + (perLift && warm.includes(it) ? WARMUP_SEC : 0), 0);
+    let t = items.reduce((s, it) => s + it.sets * perSet(it) + (perLift && warm.includes(it) ? WARMUP_SEC : 0) + (perLift ? CHANGE_SEC : 0), 0);
     const seen = new Set();
     for (const it of items) if (it.superset && !seen.has(it.superset)) {
       seen.add(it.superset);
       const pair = items.filter(x => x.superset === it.superset);
+      if (pair.length < 2) continue; // its partner was dropped: no time saved
       t -= Math.min(...pair.map(x => x.sets)) * restSec;
     }
     return t;
@@ -407,14 +444,26 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
   }
   let trimmed = 0;
   const trimOrder = () => [...items].filter(it => !it.main).sort((a, b) => (pri.includes(a.muscle) - pri.includes(b.muscle)) || (a.core - b.core) || (b.sets - a.sets));
+  // Fewer exercises done properly beat many at 2 sets each, so extra
+  // exercises go before sets drop to 2 (and each exercise change takes time).
+  const lifts = m => items.filter(x => x.muscle === m).length;
+  const drop = it => { trimmed += it.sets; items.splice(items.indexOf(it), 1); };
   while (timeOf() > limit) {
+    // 1. A third exercise for one muscle.
+    const third = trimOrder().find(it => !it.core && lifts(it.muscle) >= 3);
+    if (third) { drop(third); continue; }
+    // 2. Sets above 3 come down.
+    const big = trimOrder().find(it => it.sets > 3);
+    if (big) { big.sets--; trimmed++; continue; }
+    // 3. A second exercise for a small muscle (arms, forearms, calves, abs).
+    const small = trimOrder().find(it => !it.core && !MAJOR.includes(it.muscle));
+    if (small) { drop(small); continue; }
+    // 4. Sets down to 2, then any remaining accessory.
     const cand = trimOrder().find(it => it.sets > 2);
     if (cand) { cand.sets--; trimmed++; continue; }
-    // Drop a non-core accessory if trimming sets isn't enough.
-    const drop = trimOrder().find(it => !it.core);
-    if (!drop) break;
-    trimmed += drop.sets;
-    items.splice(items.indexOf(drop), 1);
+    const acc = trimOrder().find(it => !it.core);
+    if (!acc) break;
+    drop(acc);
   }
   if (trimmed) notes.push(`Time limit: ${trimmed} set${trimmed > 1 ? 's' : ''} trimmed`);
   // A dropped accessory can leave its superset partner alone.
@@ -468,7 +517,9 @@ export function planWeek(input) {
     if (f.getTime() > ws) startIdx = Math.min(7, Math.round((f.getTime() - ws) / DAY));
   }
   const dateOf = i => new Date(ws + i * DAY + 3600000 * 12);
-  const out = Array.from({ length: 7 }, (_, i) => ({ weekday: i, date: dateOf(i).toISOString().slice(0, 10), kind: 'rest' }));
+  // Local calendar dates (UTC dates are a day off in some time zones).
+  const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const out = Array.from({ length: 7 }, (_, i) => ({ weekday: i, date: ymd(dateOf(i)), kind: 'rest' }));
 
   // Pause: nothing planned.
   if (plan.pausedUntil && new Date(plan.pausedUntil).getTime() > now) {
@@ -576,7 +627,7 @@ export function planWeek(input) {
         if (!n) continue;
         const ex = lookup(e.exId);
         prevDone[ex.muscle] = (prevDone[ex.muscle] || 0) + n;
-        for (const [m, wt] of Object.entries(indirectByMuscle(ex))) if (!MAJOR.includes(m)) prevDone[m] = (prevDone[m] || 0) + wt * n;
+        for (const [m, wt] of Object.entries(indirectCredit(ex))) prevDone[m] = (prevDone[m] || 0) + wt * n;
       }
     }
     const made = [];
@@ -587,10 +638,12 @@ export function planWeek(input) {
     }
     if (made.length) notes.push(`Making up for last week: ${made.join(', ')} sets`);
   }
+  // A plan started mid-week: the days left get their normal share of the week
+  // (no cramming), and what you already did this week counts toward the goal.
+  let midWeek = 1;
   if (startIdx > 0 && weekdays.length) {
-    const frac = weekdays.filter(d => d >= startIdx).length / weekdays.length;
-    targets = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * frac)]));
-    if (frac < 1) notes.push('Starting mid-week: volume scaled to the days left');
+    midWeek = weekdays.filter(d => d >= startIdx).length / weekdays.length;
+    if (midWeek < 1) notes.push('Started mid-week: the days left get their usual share, and what you did earlier this week counts');
   }
   if (ease < 1) {
     targets = Object.fromEntries(Object.entries(targets).map(([m, t]) => [m, Math.round(t * ease)]));
@@ -602,23 +655,23 @@ export function planWeek(input) {
   // planned — so the plan doesn't shrink mid-week as sessions get done.
   const doneMuscle = {};
   const directDone = {};
-  // Workouts before a mid-week start are already covered by scaling the
-  // targets down, so they don't count again.
-  for (const w of inWeek.filter(x => (new Date(x.date).getDay() + 6) % 7 >= startIdx)) {
+  for (const w of inWeek) {
     for (const e of w.exercises) {
       const n = workingSets(e).length;
-      if (!n) continue;
       const ex = lookup(e.exId);
+      if (!n || ex.unknown) continue;
       doneMuscle[ex.muscle] = (doneMuscle[ex.muscle] || 0) + n;
       directDone[ex.muscle] = (directDone[ex.muscle] || 0) + n;
-      for (const [m, wt] of Object.entries(indirectByMuscle(ex))) if (!MAJOR.includes(m)) doneMuscle[m] = (doneMuscle[m] || 0) + wt * n;
+      for (const [m, wt] of Object.entries(indirectCredit(ex))) doneMuscle[m] = (doneMuscle[m] || 0) + wt * n;
     }
   }
   // Muscles this split never trains directly (forearms on full-body days) get
   // only indirect work: no goal to hit or show.
   const trainedBySplit = new Set(split.rotation.flatMap(t => PLAN_DAYS[t].muscles));
   for (const m of Object.keys(MUSCLES)) if (!trainedBySplit.has(m)) { targets[m] = 0; goals[m] = 0; }
-  const remaining = Object.fromEntries(Object.keys(MUSCLES).map(m => [m, Math.max(0, targets[m] - (doneMuscle[m] || 0))]));
+  // What the rest of this week should add for each muscle.
+  const goalFor = m => (midWeek < 1 ? Math.min(targets[m], (doneMuscle[m] || 0) + targets[m] * midWeek) : targets[m]);
+  const remaining = Object.fromEntries(Object.keys(MUSCLES).map(m => [m, Math.max(0, goalFor(m) - (doneMuscle[m] || 0))]));
   const sessionsWith = m => order.filter(o => PLAN_DAYS[o.type].muscles.includes(m));
 
   // Each session's lifts with this week's edits (swap/remove) applied.
@@ -655,14 +708,14 @@ export function planWeek(input) {
       }
     }
   };
-  // Big muscles first, then subtract their indirect work from small muscles.
-  assign(MAJOR);
-  for (let i = 0; i < sessions.length; i++) {
-    for (const m of MAJOR) {
+  // Big muscles first, one at a time: each one's planned sets give the muscles
+  // after it half credit (squats -> glutes, bench -> front delts, presses -> triceps).
+  for (const m of MAJOR) {
+    assign([m]);
+    for (let i = 0; i < sessions.length; i++) {
       const list = sessions[i].variant[m] || [];
       if (!perSession[i][m] || !list.length) continue;
-      const ind = indirectByMuscle(lookup(list[0]));
-      for (const [mm, w] of Object.entries(ind)) if (!MAJOR.includes(mm)) remaining[mm] = Math.max(0, remaining[mm] - w * perSession[i][m]);
+      for (const [mm, w] of Object.entries(indirectCredit(lookup(list[0])))) remaining[mm] = Math.max(0, (remaining[mm] || 0) - w * perSession[i][m]);
     }
   }
   // Indirect work can stand in for at most 60% of a small muscle's sets, so
@@ -684,11 +737,12 @@ export function planWeek(input) {
   // applies minimums and estimates indirect work from one lift, so it can drift.
   const credit = (t, exId, n) => {
     const ex = lookup(exId);
+    if (ex.unknown) return;
     t[ex.muscle] = (t[ex.muscle] || 0) + n;
-    for (const [mm, wt] of Object.entries(indirectByMuscle(ex))) if (!MAJOR.includes(mm)) t[mm] = (t[mm] || 0) + wt * n;
+    for (const [mm, wt] of Object.entries(indirectCredit(ex))) t[mm] = (t[mm] || 0) + wt * n;
   };
   const doneCredit = {};
-  for (const w of inWeek.filter(x => (new Date(x.date).getDay() + 6) % 7 >= startIdx)) {
+  for (const w of inWeek) {
     for (const e of w.exercises) { const n = workingSets(e).length; if (n) credit(doneCredit, e.exId, n); }
   }
   const totals = () => { const t = { ...doneCredit }; for (const b of built) for (const it of b.items) credit(t, it.exId, it.sets); return t; };
@@ -696,8 +750,10 @@ export function planWeek(input) {
   const directOf = m => (directDone[m] || 0) + built.reduce((s, b) => s + setsIn(b, m), 0);
   const setMin = it => (perLift ? 40 + restSeconds(lookup(it.exId), { base: restSec }) : secPerSet) / 60;
   const limitMin = profile.minutes || 60;
-  for (const m of [...MAJOR, ...Object.keys(MUSCLES).filter(x => !MAJOR.includes(x))]) {
-    const goal = targets[m] || 0;
+  // Two passes: changing one muscle's sets changes the half credit others get
+  // (dips give chest credit after chest was balanced).
+  for (const m of [0, 1].flatMap(() => [...MAJOR, ...Object.keys(MUSCLES).filter(x => !MAJOR.includes(x))])) {
+    const goal = goalFor(m) || 0;
     // Small muscles keep 40% of their goal as direct work, for the parts bigger
     // lifts miss (the triceps long head). Heavy pressing can then put triceps a
     // little over the goal; the weekly card says why.
@@ -711,7 +767,9 @@ export function planWeek(input) {
         if (c) { c.it.sets--; c.b.estMinutes -= setMin(c.it); continue; }
         // Every lift is at 2 sets: drop a whole accessory if that doesn't undershoot.
         // (A small muscle may lose its only lift in one session if other days still train it directly.)
-        const d = cands.find(x => have - x.it.sets >= goal - 0.5 && directOf(m) - x.it.sets >= floor
+        // Never the only lift this week aimed at its part of the muscle.
+        const partStays = x => built.some(b => b.items.some(it => it !== x.it && it.muscle === m && primaryRegion(lookup(it.exId)) === primaryRegion(lookup(x.it.exId))));
+        const d = cands.find(x => have - x.it.sets >= goal - 0.5 && directOf(m) - x.it.sets >= floor && partStays(x)
           && (!x.it.core || (!MAJOR.includes(m) && built.some(b => b !== x.b && b.items.some(it => it.muscle === m)))));
         if (d) {
           d.b.items.splice(d.b.items.indexOf(d.it), 1);
@@ -741,8 +799,16 @@ export function planWeek(input) {
     b.items = sessionOrder(byDay, profile.priority || []);
   });
   const after = totals();
-  const short = Object.keys(MUSCLES).filter(m => (targets[m] || 0) > 0 && (after[m] || 0) < targets[m] - 1.5 && sessionsWith(m).length);
-  if (short.length) notes.push(`${short.map(m => MUSCLES[m]).join(', ')}: below this week's goal. Your days and session length can't fit more this week; next week makes up part of it.`);
+  const short = Object.keys(MUSCLES).filter(m => (targets[m] || 0) > 0 && (after[m] || 0) < goalFor(m) - 1.5 && sessionsWith(m).length);
+  if (short.length) {
+    const capped = short.every(m => built.filter(b => b.items.some(it => it.muscle === m)).every(b => setsIn(b, m) >= PER_SESSION_CAP));
+    const missing = short.reduce((s, m) => s + Math.max(0, goalFor(m) - (after[m] || 0)), 0);
+    const days = Math.max(1, built.filter(b => b.items.some(it => short.includes(it.muscle))).length);
+    const extra = Math.max(5, Math.ceil((missing / days) * (secPerSet / 60) / 5) * 5);
+    // More than half an hour extra isn't a realistic fix: suggest another day.
+    const fix = capped || extra > 30 ? 'Another training day for them would fit it' : `About ${extra} more minutes on those days would fit it`;
+    notes.push(`${short.map(m => MUSCLES[m]).join(', ')}: below this week's goal. ${fix}; next week makes up part of it.`);
+  }
 
   sessions.forEach((s, i) => {
     const day = remainingDays[i];
@@ -823,7 +889,7 @@ export function reviewBlock(input) {
         // rotation never drops a region (e.g. shrugs are the only direct traps work).
         const pick = (from, wantRegion, compound) => {
           const c = exercises.filter(ex => ex.muscle === m && !inSlot.has(ex.id) && ex.id !== from && !blockedSet.has(ex.id)
-            && allowedBy(profile.equipment, ex) && allowed.includes(primaryRegion(ex)) && (compound == null || !!ex.compound === compound)
+            && allowedBy(profile.gear || profile.equipment, ex) && allowed.includes(primaryRegion(ex)) && (compound == null || !!ex.compound === compound)
             && (exerciseRegions(ex)[wantRegion] || 0) >= DIRECT && (!ex.hard || profile.level === 'advanced'));
           c.sort((a, b) => ((primaryRegion(b) === wantRegion) - (primaryRegion(a) === wantRegion))
             || ((exerciseRegions(b)[wantRegion] || 0) - (exerciseRegions(a)[wantRegion] || 0)) || ((usage[b.id] || 0) - (usage[a.id] || 0)));

@@ -6,7 +6,7 @@ import { weekKey } from '../js/insights.js';
 import {
   createPlan, blockedLifts, maintainPlan, currentWeek, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays,
   editSession, unexclude, dropFromBlock, sessionEntries, runReview, approveReview, postponeReview, reviewDue,
-  blockWeek, replacementFor, swapOptions, ownWorkouts, STRENGTH_ZONE, LEARN_AFTER, BREAK_DAYS,
+  blockWeek, replacementFor, swapOptions, ownWorkouts, weekVolume, STRENGTH_ZONE, LEARN_AFTER, BREAK_DAYS,
 } from '../js/plancontrol.js';
 
 const lookup = id => EXERCISES.find(e => e.id === id);
@@ -402,7 +402,8 @@ test('block review keeps lifts that are still progressing', () => {
     const today = todayOf(currentWeek(plan, workouts, lookup, t), t);
     if (today.kind !== 'train') continue;
     const w = doSession(plan, today, t);
-    for (const e of w.exercises) for (const s of e.sets) { s.weight = 100 + d * 2; s.target.weight = s.weight; }
+    // Weights climb; timed holds climb in seconds.
+    for (const e of w.exercises) for (const s of e.sets) { if (lookup(e.exId).timed) { s.reps = 20 + d; s.target.reps = s.reps; } else { s.weight = 100 + d * 2; s.target.weight = s.weight; } }
     workouts.push(w);
   }
   const review = runReview(plan, { workouts, lookup, bwOn: () => 180, exercises: EXERCISES, usage: {}, blocked: [] });
@@ -424,7 +425,7 @@ test('days before the plan started show as not planned, not as rest; a full week
 const offPlan = (id, t, list) => ({ id, date: new Date(t).toISOString(), dayType: 'upper', exercises: list.map(([exId, n]) => ({ exId, sets: Array.from({ length: n }, () => ({ weight: 100, reps: 10, done: true })) })) });
 const sessionSets = d => d.session.items.reduce((a, i) => a + i.sets, 0);
 
-test('workouts from before a mid-week start do not shrink the plan a second time', () => {
+test('a plan started mid-week counts what you did earlier that week, without overshooting or cramming', () => {
   const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5], minutes: 120 };
   const wed = MONDAY + 2 * DAY;
   const plan = fresh(p6, 'upper_lower', wed);
@@ -432,9 +433,13 @@ test('workouts from before a mid-week start do not shrink the plan a second time
     offPlan('o1', MONDAY, [['bench_press', 4], ['lat_pulldown', 4], ['overhead_press', 4], ['cable_row', 4], ['db_curl', 3], ['rope_pushdown', 3]]),
     offPlan('o2', MONDAY + DAY, [['squat', 4], ['rdl', 4], ['leg_press', 3], ['lying_leg_curl', 3], ['standing_calf_raise', 3]]),
   ];
-  const without = currentWeek(plan, [], lookup, wed).days.filter(d => d.kind === 'train');
-  const withOld = currentWeek(plan, old, lookup, wed).days.filter(d => d.kind === 'train');
-  assert.deepEqual(withOld.map(sessionSets), without.map(sessionSets));
+  const without = currentWeek(plan, [], lookup, wed);
+  const withOld = currentWeek(plan, old, lookup, wed);
+  // Never more than the days left would normally get...
+  withOld.days.filter(d => d.kind === 'train').forEach((d, i) => assert.ok(sessionSets(d) <= sessionSets(without.days.filter(x => x.kind === 'train')[i]) + 1));
+  // ...and done + planned never goes past the weekly goal.
+  const vol = weekVolume(withOld, old, lookup);
+  for (const m of ['chest', 'back', 'quads', 'hamstrings']) assert.ok(vol[m].done + vol[m].planned <= vol[m].goal + 1, `${m}: ${vol[m].done}+${vol[m].planned}/${vol[m].goal}`);
 });
 
 test('a planned session never shrinks to scraps, even after lots of extra training', () => {
@@ -688,9 +693,18 @@ function soleCoverer(plan, type = 'upper') {
   return null;
 }
 
+// A plan (from a few starting days) with a lift that alone covers a part.
+function planWithSole() {
+  for (let k = 0; k < 40; k++) {
+    const plan = fresh({ ...profile, days: [0, 1, 2, 3, 4, 5] }, 'upper_lower', MONDAY - (7 + k) * DAY);
+    const sole = soleCoverer(plan);
+    if (sole) return { plan, sole };
+  }
+  return { plan: null, sole: null };
+}
+
 test('a rest-of-block swap that drops a part puts it back in another A/B/C session', () => {
-  const plan = fresh({ ...profile, days: [0, 1, 2, 3, 4, 5] }, 'upper_lower', MONDAY - 7 * DAY);
-  const sole = soleCoverer(plan);
+  const { plan, sole } = planWithSole();
   assert.ok(sole, 'found a lift that alone covers a part');
   const before = leadParts(plan, 'upper', sole.m);
   // Swap it for a same-muscle lift that trains a different part.
@@ -703,8 +717,7 @@ test('a rest-of-block swap that drops a part puts it back in another A/B/C sessi
 });
 
 test('a rest-of-block removal also keeps every part covered', () => {
-  const plan = fresh({ ...profile, days: [0, 1, 2, 3, 4, 5] }, 'upper_lower', MONDAY - 7 * DAY);
-  const sole = soleCoverer(plan);
+  const { plan, sole } = planWithSole();
   const before = leadParts(plan, 'upper', sole.m);
   const r = editSession(plan, { seq: 0, type: 'upper', slot: 0, action: 'remove', from: sole.id, scope: 'block' }, ctx);
   assert.ok(!r.plan.slots.upper[0][sole.m].includes(sole.id));
@@ -754,9 +767,9 @@ test('the week adapts to what you actually did so every part gets trained', asyn
   const p6 = { ...profile, days: [0, 1, 2, 3, 4, 5] };
   const plan = fresh(p6, 'upper_lower', MONDAY - 7 * DAY);
   const wctx = { ...ctx };
-  // A normal week changes nothing.
+  // A normal week: any swap only adds a part the week's sessions left out.
   const plain = currentWeek(plan, [], lookup, MONDAY, 130, wctx);
-  assert.ok(!plain.days.some(d => d.kind === 'train' && d.session.items.some(i => i.covers)), 'nothing swapped in a normal week');
+  assert.ok(plain.days.filter(d => d.kind === 'train').every(d => d.session.items.filter(i => i.covers).every(i => (lookup(i.exId).regions[i.covers] || 0) >= 0.75)));
   const latsIn = w => w.days.filter(d => d.kind === 'train').some(d => d.session.items.some(i => (lookup(i.exId).regions.lats || 0) >= 0.75));
   // Strip every lats lift out of the plan's later sessions this week except Monday's,
   // then do Monday without its lats lift: the rest of the week must add lats back.

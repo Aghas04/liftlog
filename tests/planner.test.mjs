@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EXERCISES, MUSCLES, REGIONS, regionsOf, primaryRegion, exerciseRegions, allowedBy, EQUIPMENT_PROFILES } from '../js/data.js';
 import {
+  indirectCredit,
   SPLITS, PLAN_DAYS, PER_SESSION_CAP, MAJOR, recommendSplits, buildBlock, planWeek, weeklyTargets, volumeBounds,
   slotFor, slotCounts, reviewBlock, applyReview, readinessAdjust, swapSuggestions, splitById,
 } from '../js/planner.js';
@@ -92,7 +93,11 @@ test('weekly sets per major muscle land near the target when time allows', () =>
       const week = planWeek({ profile, plan: makePlan(profile, split.id), lookup, now: MONDAY });
       const targets = weeklyTargets(profile);
       const planned = {};
-      for (const d of week.days) for (const it of d.session?.items || []) planned[it.muscle] = (planned[it.muscle] || 0) + it.sets;
+      // Counted like the weekly card: half credit from other lifts (squats -> glutes).
+      for (const d of week.days) for (const it of d.session?.items || []) {
+        planned[it.muscle] = (planned[it.muscle] || 0) + it.sets;
+        for (const [mm, w] of Object.entries(indirectCredit(lookup(it.exId)))) planned[mm] = (planned[mm] || 0) + w * it.sets;
+      }
       for (const m of MAJOR) {
         const freq = week.days.filter(d => d.session && PLAN_DAYS[d.session.type].muscles.includes(m)).length;
         if (!freq) continue;

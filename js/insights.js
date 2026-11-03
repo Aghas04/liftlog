@@ -21,6 +21,7 @@ export function muscleSets(workouts, lookup, sinceIso) {
   for (const w of workouts) {
     if (sinceIso && w.date < sinceIso) continue;
     for (const e of w.exercises) {
+      if (lookup(e.exId).unknown) continue;
       const m = lookup(e.exId).muscle;
       out[m] = (out[m] || 0) + workingSets(e).length;
     }
@@ -286,7 +287,7 @@ export function regionSets(workouts, lookup, sinceIso, untilIso) {
     if (untilIso && w.date >= untilIso) continue;
     for (const e of w.exercises) {
       const n = workingSets(e).length;
-      if (!n) continue;
+      if (!n || lookup(e.exId).unknown) continue;
       for (const [r, wt] of Object.entries(exerciseRegions(lookup(e.exId)))) out[r] = (out[r] || 0) + n * wt;
     }
   }

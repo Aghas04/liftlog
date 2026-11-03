@@ -917,3 +917,7 @@ label.btn { cursor: pointer; }
 .fix-card { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 14px; padding: 14px; }
 .fix-card > p { font-size: 15px; line-height: 1.45; margin-bottom: 12px; }
 a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; }
+
+/* Small text-style buttons under a suggestion; the version line in Settings. */
+.link-btn { display: block; margin-top: 6px; padding: 4px 0; background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px; font-weight: 700; text-align: left; cursor: pointer; }
+.version { text-align: center; margin-top: 14px; }

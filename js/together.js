@@ -39,11 +39,12 @@ export function unpackWorkout(code) {
     const data = JSON.parse(b64url.decode(code));
     if (data?.v !== 1 || !Array.isArray(data.e) || !data.e.length || data.e.length > 30) return null;
     const exercises = data.e
-      .filter(x => typeof x?.i === 'string' && x.i.length < 80)
+      // Ids end up in the page: letters, digits, _ . - only (a crafted link can't inject code).
+      .filter(x => typeof x?.i === 'string' && /^[\w.-]{1,80}$/.test(x.i))
       .map(x => ({
         exId: x.i,
         sets: Math.max(1, Math.min(10, +x.s || 3)),
-        ...(Array.isArray(x.z) && x.z.length === 2 ? { zone: x.z.map(Number) } : {}),
+        ...(Array.isArray(x.z) && x.z.length === 2 && x.z.every(n => Number.isInteger(+n) && +n >= 1 && +n <= 30) && +x.z[0] < +x.z[1] ? { zone: x.z.map(Number) } : {}),
         ...(x.g ? { group: `g${+x.g}` } : {}),
         ...(x.c && typeof x.c.n === 'string' ? { custom: { name: x.c.n.slice(0, 60), muscle: x.c.m, equipment: x.c.q, compound: !!x.c.k } } : {}),
       }));
@@ -73,7 +74,9 @@ export function resolveShared(shared, ctx) {
       const same = [...ctx.customs, ...newCustoms].find(c => c.name.trim().toLowerCase() === x.custom.name.trim().toLowerCase());
       if (same) id = same.id;
       else {
-        const c = { id: `c_${x.exId.replace(/^c_/, '')}`, name: x.custom.name, muscle: x.custom.muscle, equipment: x.custom.equipment || 'machine', compound: x.custom.compound, custom: true };
+        const c = { id: `c_${x.exId.replace(/^c_/, '')}`, name: x.custom.name, muscle: x.custom.muscle, equipment: ctx.equipment?.[x.custom.equipment] ? x.custom.equipment : 'machine', compound: x.custom.compound, custom: true };
+        // A custom id already used here for a different lift: give this one its own.
+        if (ctx.customs.some(o => o.id === c.id)) c.id = `${c.id}_${Math.random().toString(36).slice(2, 6)}`;
         newCustoms.push(c);
         id = c.id;
       }

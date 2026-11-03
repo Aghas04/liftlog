@@ -1,6 +1,6 @@
 // Offline support: serve the app shell from cache, refresh it in the background.
 // Bump VERSION when shipping changes so phones pick up the new files.
-const VERSION = 'liftlog-v33';
+const VERSION = 'liftlog-v34';
 const FILES = [
   './',
   'index.html',
@@ -30,6 +30,7 @@ const FILES = [
   'js/tips.js',
   'js/howto.js',
   'js/equipment.js',
+  'js/version.js',
   'icons/icon-180.png',
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -53,15 +54,12 @@ self.addEventListener('activate', ev => {
   );
 });
 
+// Serve this version's files from its own cache. The cache is only ever
+// filled at install, all files together, so old and new files never mix
+// (a mix can break the app). A new version arrives as a new service worker.
 self.addEventListener('fetch', ev => {
   if (ev.request.method !== 'GET' || new URL(ev.request.url).origin !== location.origin) return;
   ev.respondWith(
-    caches.open(VERSION).then(async cache => {
-      const cached = await cache.match(ev.request, { ignoreSearch: true });
-      const fresh = fetch(ev.request, { cache: 'no-cache' })
-        .then(res => { if (res.ok) cache.put(ev.request, res.clone()); return res; })
-        .catch(() => cached);
-      return cached || fresh;
-    })
+    caches.open(VERSION).then(async cache => (await cache.match(ev.request, { ignoreSearch: true })) || fetch(ev.request))
   );
 });
