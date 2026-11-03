@@ -309,12 +309,14 @@ export function regionLastDirect(workouts, lookup) {
 }
 
 /** Weekly set target per region: the muscle target split by region size. */
-export function regionTargets(weeklyTarget) {
+// perMuscle: optional weekly sets per muscle (a plan's goals) instead of one number for all.
+export function regionTargets(weeklyTarget, perMuscle = null) {
   const out = {};
   for (const m of Object.keys(MUSCLES)) {
     const rs = regionsOf(m);
     const total = rs.reduce((s, r) => s + REGIONS[r].size, 0);
-    for (const r of rs) out[r] = (weeklyTarget * REGIONS[r].size) / total;
+    const t = perMuscle?.[m] ?? weeklyTarget;
+    for (const r of rs) out[r] = (t * REGIONS[r].size) / total;
   }
   return out;
 }

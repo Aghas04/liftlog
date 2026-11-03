@@ -13,7 +13,7 @@
 // - Priority lifts go first (Nunes 2021). Supersets save time without losing
 //   volume (Iversen 2021, 2024). Deloads only when needed (Coleman 2024).
 import { MUSCLES, REGIONS, regionsOf, exerciseRegions, primaryRegion, allowedBy } from './data.js';
-import { workingSets, sessionE1RM, sessionMissed, DELOAD_SETS } from './engine.js';
+import { workingSets, sessionE1RM, sessionMissed, DELOAD_SETS, restSeconds } from './engine.js';
 import { neglectedRegions, DIRECT, weekKey } from './insights.js';
 import { worthBoth } from './equipment.js';
 
@@ -348,7 +348,9 @@ export function indirectByMuscle(ex) {
  * Build one session: sets per muscle -> exercises with sets, ordered, with
  * main lifts flagged and supersets/trims applied to fit the time limit.
  */
-export function buildSession({ type, variant, setsByMuscle, lookup, profile, secPerSet = 130, restSec = 90 }) {
+// perLift: no measured pace yet, so time each lift by its own rest (2-3 min on
+// big lifts) plus warm-ups, instead of one average per set.
+export function buildSession({ type, variant, setsByMuscle, lookup, profile, secPerSet = 130, restSec = 90, perLift = false }) {
   const day = PLAN_DAYS[type];
   const items = [];
   const notes = [];
@@ -371,8 +373,10 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
   }
   // Fit the time limit: superset unrelated isolation lifts, then trim.
   const limit = (profile.minutes || 60) * 60;
+  const WORK_SEC = 40, WARMUP_SEC = 150;
+  const perSet = it => (perLift ? WORK_SEC + restSeconds(lookup(it.exId), { base: restSec, zone: it.main ? [3, 6] : null }) : secPerSet);
   const timeOf = () => {
-    let t = items.reduce((s, it) => s + it.sets * secPerSet, 0);
+    let t = items.reduce((s, it) => s + it.sets * perSet(it) + (perLift && it.core && it.compound ? WARMUP_SEC : 0), 0);
     const seen = new Set();
     for (const it of items) if (it.superset && !seen.has(it.superset)) {
       seen.add(it.superset);
@@ -427,7 +431,7 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
  */
 export function planWeek(input) {
   // deload: this is a deload week (fewer sets). carry: false turns off carrying last week's shortfall.
-  const { profile, plan, workouts = [], lookup, now = Date.now(), secPerSet = 130, deload = false, carry = true } = input;
+  const { profile, plan, workouts = [], lookup, now = Date.now(), secPerSet = 130, deload = false, carry = true, perLift = false } = input;
   const split = splitById(plan.splitId);
   const ws = weekKey(now);
   const wk = String(ws);
@@ -642,7 +646,7 @@ export function planWeek(input) {
 
   // Build each session.
   sessions.forEach((s, i) => {
-    const built = buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec: Math.max(60, secPerSet - 40) });
+    const built = buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec: Math.max(60, secPerSet - 40), perLift });
     const day = remainingDays[i];
     out[day].kind = 'train';
     out[day].session = {

@@ -42,6 +42,10 @@ export function paceFromHistory(workouts, defaultRest = 90) {
   return per.length ? Math.round(per[Math.floor(per.length / 2)]) : fallback;
 }
 
+/** Enough finished workouts to measure your real pace per set? */
+export const hasPaceHistory = workouts => workouts.filter(w => w.finishedAt).slice(-6)
+  .some(w => w.exercises.reduce((s, e) => s + workingSets(e).length, 0) >= 6);
+
 export function setsForMinutes(minutes, secPerSet) {
   return Math.max(MIN_SETS_PER_MUSCLE, Math.floor((minutes * 60) / secPerSet));
 }
@@ -77,12 +81,14 @@ export function buildWorkout(input) {
   const {
     workouts = [], lookup, exercises, now = Date.now(), budget, mode = 'auto', muscles: picked = [],
     weeklyTarget = 10, ignored = [], snoozed = {}, seed = 0, exclude = [], usage = {},
+    level = null, muscleTargets = null, soon = {},
   } = input;
   const ignoredSet = new Set(ignored);
   const jitter = seed ? rng(seed) : () => 0;
 
   // 1. Region need.
-  const targets = regionTargets(weeklyTarget);
+  // A plan's per-muscle goals when there is one (they follow your level), else one number for all.
+  const targets = regionTargets(weeklyTarget, muscleTargets);
   const done = regionSets(workouts, lookup, new Date(now - 7 * DAY).toISOString());
   const neglect = neglectedRegions(workouts, lookup, { now, ignored, snoozed, weeklyTarget });
   const neglectBy = Object.fromEntries(neglect.map(n => [n.region, n]));
@@ -109,7 +115,11 @@ export function buildWorkout(input) {
     }
   }
 
-  const pool = exercises.filter(ex => !exclude.includes(ex.id));
+  // Muscles your plan trains in the next day or two: picked less, so that day isn't hurt.
+  for (const [m, f] of Object.entries(soon)) if (readiness[m] != null) readiness[m] = Math.min(readiness[m], f);
+
+  // Advanced-only lifts (Nordic curls, sissy squats) only for advanced lifters or if you already do them.
+  const pool = exercises.filter(ex => !exclude.includes(ex.id) && !(ex.hard && level !== 'advanced' && !usage[ex.id]));
   const byMuscle = m => pool.filter(ex => ex.muscle === m);
   // Most sets a muscle can take in one workout: the per-session limit, or
   // every exercise at the 4-set maximum if there are few exercises.
@@ -232,7 +242,7 @@ export function buildWorkout(input) {
       const reason = n
         ? `${REGIONS[main].name}: ${n.reason.charAt(0).toLowerCase()}${n.reason.slice(1)}`
         : j === 0
-          ? `${MUSCLES[m]}: ${doneM}/${weeklyTarget} sets this week`
+          ? `${MUSCLES[m]}: ${doneM}/${Math.round(muscleTargets?.[m] ?? weeklyTarget)} sets this week`
           : `Covers ${REGIONS[main].name.toLowerCase()}`;
       items.push({ exId: ex.id, sets, muscle: m, region: main, compound: !!ex.compound, rank: chosen.indexOf(m), order: j, reason, isNew: !usage[ex.id] });
     });

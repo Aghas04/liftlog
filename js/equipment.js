@@ -71,8 +71,11 @@ export const isFullGym = gear => GEAR_KEYS.every(k => gear.includes(k));
  * rep goal at a weight. Returns the suggestion unchanged when no cap applies.
  */
 export function capDumbbell(sug, ex, maxDb, repsAt) {
-  if (!sug || !maxDb || ex.equipment !== 'dumbbell' || ex.timed || !(sug.weight > maxDb)) return sug;
-  const reps = sug.reps.map((r, i) => Math.min(30, Math.max(r, repsAt(maxDb, i) || r)));
+  if (!sug || !maxDb || ex.equipment !== 'dumbbell' || ex.timed || !(Math.max(sug.weight, ...(sug.weights || [])) > maxDb)) return sug;
+  const over = i => (sug.weights ? sug.weights[i] : sug.weight) > maxDb;
+  const reps = sug.reps.map((r, i) => (over(i) ? Math.min(30, Math.max(r, repsAt(maxDb, i) || r)) : r));
+  if (sug.weights) return { ...sug, weights: sug.weights.map(w => Math.min(w, maxDb)), weight: Math.min(sug.weight, maxDb), reps, capped: true, zone: [sug.zone?.[0] ?? 6, 30],
+    reason: 'Heaviest dumbbell here: more reps on the sets that wanted more weight.' };
   // Rep goals may go past the usual range (up to 30) at the capped weight.
   return { ...sug, weight: maxDb, reps, capped: true, zone: [sug.zone?.[0] ?? 6, 30],
     reason: `Heaviest dumbbell here: do more reps (up to 30), slow the lowering, or pause at the stretch.` };

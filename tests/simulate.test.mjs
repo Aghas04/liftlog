@@ -59,9 +59,11 @@ function checkSuggestion(entry, prev, ex, inc, bw, recent) {
   const where = `session ${entry.k} (${sug.kind}: ${sug.weight} × ${sug.reps.join(',')})`;
   assert.ok(Number.isFinite(sug.weight) && sug.weight >= 0, `bad weight at ${where}`);
   assert.ok(Math.abs(sug.weight / inc - Math.round(sug.weight / inc)) < 1e-9, `weight not loadable in ${inc} lb steps at ${where}`);
-  const cap = ex.equipment === 'bodyweight' ? zMax + 5 : 12;
+  // Isolation lifts may add reps up to 15 before a big weight jump.
+  const cap = ex.equipment === 'bodyweight' ? zMax + 5 : ex.compound ? 12 : 15;
+  if (sug.reps.some(r => r > 12) && ex.equipment !== 'bodyweight') assert.equal(sug.zone?.[1], 15, `over 12 without the extended range at ${where}`);
   for (const r of sug.reps) assert.ok(Number.isInteger(r) && r >= 1 && r <= cap, `rep target over ${cap} at ${where}`);
-  assert.ok(sug.reps.every((r, i) => i === 0 || r <= sug.reps[i - 1]), `later sets ask for more reps at ${where}`);
+  assert.ok(sug.reps.every((r, i) => i === 0 || r <= sug.reps[i - 1] || (sug.weights && sug.weights[i] < sug.weights[i - 1])), `later sets ask for more reps at ${where}`);
   if (ex.equipment !== 'bodyweight' || bw) assert.ok(sug.weight > 0 || ex.equipment === 'bodyweight', `zero weight at ${where}`);
   // Never more than one step / ~12% above the heaviest weight used in the
   // last 3 sessions, and never a crash of more than 35%.

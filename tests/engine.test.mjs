@@ -30,12 +30,23 @@ test('top of the zone: weight goes up and reps reset into the zone', () => {
   assert.ok(s.reps[0] >= 6 && s.reps[0] <= 12);
 });
 
-test('weighted lifts never go past 12 reps, even when the next weight is a big jump', () => {
+test('big jump on an isolation lift: add reps up to 15 first, then go up and never past 12', () => {
+  // 15 -> 20 lb is +33%: build to 15 reps at 15 lb first.
   const s = suggest(curl, [{ date: daysAgo(3), sets: sets(15, [12, 12]) }], { increment: 5, now: NOW });
-  assert.equal(s.weight, 20);
-  assert.ok(s.reps.every(r => r <= 12));
-  // Going lighter mid-workout can't push the goal past 12 either.
-  assert.ok(targetFor(s, curl, 5, 0) <= 12);
+  assert.equal(s.weight, 15);
+  assert.ok(s.reps[0] === 13 && s.reps.every(r => r <= 15));
+  assert.equal(s.zone[1], 15);
+  // At 15 reps: up to 20, no more than 12.
+  const up = suggest(curl, [{ date: daysAgo(3), sets: sets(15, [15, 15]) }], { increment: 5, now: NOW });
+  assert.equal(up.weight, 20);
+  assert.ok(up.reps.every(r => r <= 12));
+  assert.ok(targetFor(up, curl, 5, 0) <= 12);
+  // A small step (2.5 lb, +17%... still big; 1 lb is fine): goes straight up.
+  const fine = suggest(curl, [{ date: daysAgo(3), sets: sets(15, [12, 12]) }], { increment: 1, now: NOW });
+  assert.ok(fine.weight > 15 && fine.reps.every(r => r <= 12));
+  // Compounds never extend.
+  const bench = suggest(row, [{ date: daysAgo(3), sets: sets(20, [12, 12]) }], { increment: 5, now: NOW });
+  assert.ok(bench.reps.every(r => r <= 12));
 });
 
 test('bodyweight lifts may go past 12 reps', () => {

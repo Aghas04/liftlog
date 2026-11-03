@@ -6,16 +6,16 @@ import { workoutsCsv } from './export.js';
 import { tipsFor } from './tips.js';
 import { GEAR, GEAR_KEYS, FREE_WEIGHTS, FULL_GYM, fitsGear, isFullGym, capDumbbell } from './equipment.js';
 import { howTo, videoUrl, SYMPTOMS, PAIN_SYMPTOMS } from './howto.js';
-import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion } from './builder.js';
+import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion, hasPaceHistory } from './builder.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
   dayType, visibleSplits,
 } from './store.js';
 import {
   suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
-  personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor, deloadSuggestion, deloadSetCount,
+  personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor, deloadSuggestion, deloadSetCount, retargetFrom, workWeightOf,
 } from './engine.js';
-import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter } from './planner.js';
+import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter, weeklyTargets } from './planner.js';
 import {
   createPlan, blockedLifts, maintainPlan, currentWeek, upcomingDays, weekVolume, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
   unexclude, dropFromBlock, sessionEntries, runReview, approveReview, postponeReview, reviewDue, isPaused, blockWeek,
@@ -165,7 +165,7 @@ function historyFor(exId, { excludeId, beforeIso } = {}) {
     if (beforeIso && w.date >= beforeIso) continue;
     w.exercises.forEach((e, i) => {
       if (e.exId !== exId) return;
-      out.push({ date: w.date, difficulty: e.difficulty, sets: e.sets, deload: e.deload, fatigue: fatigueAt(w, i, false) });
+      out.push({ date: w.date, difficulty: e.difficulty, sets: e.sets, deload: e.deload, fatigue: fatigueAt(w, i, false), bw: bodyweightOn(w.date) });
     });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
@@ -205,8 +205,10 @@ function refreshPlan() {
     let k = 0;
     for (const s of e.sets) {
       if (s.warmup) continue;
-      if (!old || s.weight == null || s.weight === old.weight) s.weight = sug.weight;
-      const reps = s.weight === sug.weight ? sug.reps[k] ?? sug.reps.at(-1) : targetFor(sug, ex, s.weight, k, bw);
+      const planned = sug.weights?.[k] ?? sug.weight;
+      const oldPlanned = old?.weights?.[k] ?? old?.weight;
+      if (!old || s.weight == null || s.weight === oldPlanned) s.weight = planned;
+      const reps = s.weight === planned ? sug.reps[k] ?? sug.reps.at(-1) : targetFor(sug, ex, s.weight, k, bw);
       s.target = reps ? { weight: s.weight, reps } : s.target;
       k++;
     }
@@ -312,7 +314,7 @@ const inDeload = () => !!state.settings.deloadUntil && Date.now() < new Date(sta
 
 function setsFrom(sug) {
   return sug
-    ? sug.reps.map(r => ({ weight: sug.weight, reps: null, target: { weight: sug.weight, reps: r }, done: false }))
+    ? sug.reps.map((r, i) => { const w = sug.weights?.[i] ?? sug.weight; return { weight: w, reps: null, target: { weight: w, reps: r }, done: false }; })
     : [{ weight: null, reps: null, target: null, done: false }];
 }
 
@@ -343,7 +345,7 @@ function suggestionFor(ex, fatigue = 0, zone = null) {
   // loads; snap those onto the step grid. Weights already typed in kg stay as is.
   if (sug && isKg(U()) && sug.weight > 0) {
     const kg = toDisplay(sug.weight, 'kg');
-    if (Math.abs(kg * 4 - Math.round(kg * 4)) > 0.02) sug = { ...sug, weight: snapToStep(sug.weight, inc) };
+    if (Math.abs(kg * 4 - Math.round(kg * 4)) > 0.02) sug = { ...sug, weight: snapToStep(sug.weight, inc), ...(sug.weights ? { weights: sug.weights.map(w => snapToStep(w, inc)) } : {}) };
   }
   if (sug && inDeload()) {
     // 'deloadWeek' (not 'deload'): only these sessions get excluded from future
@@ -356,12 +358,45 @@ function suggestionFor(ex, fatigue = 0, zone = null) {
 // Heaviest-dumbbell limit: that dumbbell with more reps.
 const capFor = (sug, ex, maxDb) => capDumbbell(sug, ex, maxDb, (wt, i) => targetFor({ ...sug, zone: [1, 30] }, ex, wt, i, bodyweightOn()));
 
+// A new lift's starting point from another version of the same movement you've
+// done (barbell bench -> dumbbell bench): its last working weight, to convert.
+function relatedStart(ex) {
+  if (!ex?.movement || ex.timed) return null;
+  let best = null;
+  for (const x of allExercises()) {
+    if (x.id === ex.id || x.movement !== ex.movement) continue;
+    const h = historyFor(x.id).filter(s => workingSets(s).length).at(-1);
+    if (h && (!best || h.date > best.date)) best = { ex: x, date: h.date, weight: workWeightOf(workingSets(h)) };
+  }
+  return best && best.weight > 0 ? { ex: best.ex, weight: best.weight } : null;
+}
+
+// A set 2+ reps off its goal: the rest of this lift's sets follow today's
+// performance. Sets whose reps you've typed stay. Returns the changed set indexes.
+function retargetRest(c) {
+  const bw = bodyweightOn();
+  const adj = retargetFrom(c.e.suggestion, c.ex, c.s, bw);
+  if (!adj) return [];
+  const at = c.e.sets.indexOf(c.s);
+  const changed = [];
+  let k = 0;
+  c.e.sets.forEach((s, i) => {
+    if (i <= at || s.warmup || s.done || s.reps != null) return;
+    const w = s.weight ?? c.s.weight;
+    const reps = targetFor(adj, c.ex, w, k++, bw);
+    if (reps && reps !== s.target?.reps) { s.target = { weight: w, reps }; changed.push(i); }
+  });
+  if (changed.length) toast(c.s.reps < c.s.target.reps ? 'Harder than planned today: next sets adjusted' : 'Stronger than planned: next sets raised');
+  return changed;
+}
+
 // A fresh exercise entry. `from` gives a rough starting weight when swapping
 // to a lift with no history: { ex, weight }.
 // zone: rep range override kept on the entry (strength-goal main lifts).
 function buildEntry(exId, from, fatigue = 0, zone = null) {
   const ex = exercise(exId);
   let sug = suggestionFor(ex, fatigue, zone);
+  if (!sug && !from) from = relatedStart(ex);
   if (!sug && from) {
     const weight = swapWeight(from.ex, ex, from.weight, increment(ex));
     if (weight) {
@@ -693,8 +728,11 @@ function exCard(w, ctx, ei, live) {
       sugHtml = `<div class="suggest"><div class="target">⏱ ${sug.reps.map(r => `${r}s`).join(' · ')}${sug.weight ? ` · ${weightLabel(ex, sug.weight)}` : ''}</div><div class="why">${esc(sug.reason)}</div></div>`;
     } else if (sug) {
       // The workout-order adjustment stays out of sight mid-workout; it's one tap away.
-      sugHtml = `<div class="suggest"><div class="target">🎯 ${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}</div><div class="why">${esc(sug.reason)}</div>
-        ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}</div>`;
+      const target = sug.weights ? sug.weights.map((w, i) => `${weightLabel(ex, w)} × ${sug.reps[i]}`).join(' · ') : `${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}`;
+      sugHtml = `<div class="suggest"><div class="target">🎯 ${target}</div><div class="why">${esc(sug.reason)}</div>
+        ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}</div>
+        ${sug.stalled && !e.sets.some(s => s.done) ? `<div class="banner info stall"><div>No progress in the last 3 sessions. Pick one to get it moving again:</div>
+          <div class="banner-btns"><button data-act="stallReset">10% lighter, build back up</button><button data-act="addSet">Add a set</button><button data-act="stallSwap">Swap it</button></div></div>` : ''}`;
     } else {
       const [lo, hi] = e.zone || zoneFor(ex);
       if (isTimed(ex)) sugHtml = `<div class="suggest first"><div class="why">New hold: tap ▶ to time it and stop when your form starts to break. Next time the app sets a goal.</div></div>`;
@@ -1449,7 +1487,7 @@ const planCtx = () => {
   const nextMon = planWeekKey(Date.now()) + 7 * DAY + 12 * 3600000;
   // A deload that touched last week: its low volume isn't a shortfall to make up.
   const lastMon = planWeekKey(Date.now()) - 7 * DAY;
-  return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, deload: inDeload(), deloadNext: until > nextMon, deloadPrev: until > lastMon && until - 7 * DAY < planWeekKey(Date.now()) };
+  return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, deload: inDeload(), perLift: !hasPaceHistory(state.workouts), deloadNext: until > nextMon, deloadPrev: until > lastMon && until - 7 * DAY < planWeekKey(Date.now()) };
 };
 const todayIdx = () => (new Date().getDay() + 6) % 7;
 
@@ -2147,6 +2185,22 @@ function buildBudget() {
   return b.unit === 'sets' ? b.sets : setsForMinutes(b.minutes, paceFromHistory(state.workouts, state.settings.defaultRest));
 }
 
+// Muscles your plan trains tomorrow (0.5) and the day after (0.75): the
+// builder goes easy on them so those days aren't hurt.
+function soonMuscles() {
+  if (!state.plan || isPaused(state.plan)) return {};
+  const out = {};
+  const day = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+  try {
+    for (const d of planUpcoming().days) {
+      const f = d.date === day(1) ? 0.5 : d.date === day(2) ? 0.75 : null;
+      if (f == null || d.kind !== 'train' || !d.session) continue;
+      for (const it of d.session.items) out[it.muscle] = Math.min(out[it.muscle] ?? 1, f);
+    }
+  } catch { /* no plan week yet */ }
+  return out;
+}
+
 function runBuild() {
   const b = ui.build;
   const budget = buildBudget();
@@ -2156,6 +2210,9 @@ function runBuild() {
     workouts: state.workouts, lookup: exercise, exercises: gp.exercises, budget, mode: b.mode, muscles: b.muscles,
     weeklyTarget: state.settings.weeklyTarget, ignored: state.settings.ignoredRegions, snoozed: state.settings.neglectSnooze,
     seed: b.seed, usage: gp.usage, exclude: blocked(),
+    level: state.plan?.profile?.level || null,
+    muscleTargets: state.plan ? weeklyTargets(state.plan.profile, state.plan.volume, pace()) : null,
+    soon: soonMuscles(),
   });
   // Picked muscles this equipment can't train (fewer than 2 lifts fit).
   const gearMissing = gear && b.mode === 'pick' ? b.muscles.filter(m => gp.exercises.filter(e => e.muscle === m).length < 2) : [];
@@ -2236,10 +2293,14 @@ function sheetHtml() {
     case 'buildPreview': {
       const p = ui.build.plan;
       const pace = paceFromHistory(state.workouts, state.settings.defaultRest);
+      // Same numbers the workout will show: each lift's fatigue from the ones before it.
+      const probe = { exercises: p.items.map(x => ({ exId: x.exId, sets: Array.from({ length: x.sets }, () => ({})) })) };
       const rows = p.items.map((it, i) => {
         const ex = exercise(it.exId);
-        const sug = capFor(suggestionFor(ex), ex, p.gear?.maxDb);
-        const load = sug ? `${weightLabel(ex, sug.weight)} × ${sug.reps[0]}` : 'new — find your weight';
+        const sug = capFor(suggestionFor(ex, fatigueAt(probe, i, true)), ex, p.gear?.maxDb);
+        const rel = !sug && relatedStart(ex);
+        const guess = rel && swapWeight(rel.ex, ex, rel.weight, increment(ex));
+        const load = sug ? `${weightLabel(ex, sug.weight)} × ${sug.reps[0]}` : guess ? `start around ${weightLabel(ex, guess)} (from ${rel.ex.name})` : 'new — find your weight';
         return `<div class="bp-row">
           <div class="bp-main">
             <span class="tag">${EQUIP_ICON[ex.equipment] || ''}${MUSCLES[it.muscle]}</span>
@@ -3109,13 +3170,15 @@ const actions = {
       }
       c.s.pr = pr;
       if (c.ctx === 'active') { unlockAudio(); afterSet(c); }
-      if (c.ctx === 'active' && !c.s.warmup && !c.e.suggestion && calibrate(c)) { save(); refreshCard(c.card); return; }
+      if (c.ctx === 'active' && !c.s.warmup && (!c.e.suggestion || c.e.suggestion.kind === 'guess') && calibrate(c)) { save(); refreshCard(c.card); return; }
+      if (c.ctx === 'active' && !c.s.warmup) c.retargeted = retargetRest(c);
     } else {
       c.s.done = false;
       c.s.pr = false;
     }
     save();
     refreshRow(c.row);
+    for (const i of c.retargeted || []) { const r = c.card.querySelector(`.set-row[data-s="${i}"]`); if (r) refreshRow(r); }
     const row = c.card.querySelector(`.set-row[data-s="${c.row.dataset.s}"]`);
     if (c.s.done) row?.classList.add('just-done');
     if (pr) {
@@ -3348,6 +3411,24 @@ const actions = {
   },
   hurtSheet() { openSheet({ type: 'hurt', ei: ui.sheet.ei }); },
   hurtSwap() { openSheet({ type: 'swap', ei: ui.sheet.ei }); },
+  stallSwap(el) { openSheet({ type: 'swap', ei: +el.closest('.ex-card').dataset.e }); },
+  stallReset(el) {
+    const c = setCtx(el);
+    if (!c.e) return;
+    const inc = increment(c.ex);
+    const hi = (c.e.suggestion?.zone || c.e.zone || zoneFor(c.ex))[1];
+    for (const s of c.e.sets) {
+      if (s.warmup || s.done) continue;
+      const w0 = s.weight ?? s.target?.weight;
+      if (!(w0 > 0)) continue;
+      s.weight = Math.max(inc, Math.round((w0 * 0.9) / inc) * inc);
+      s.target = { weight: s.weight, reps: Math.min(hi, (s.target?.reps || 8) + 2) };
+    }
+    c.e.suggestion = { ...c.e.suggestion, stalled: false, reason: 'Reset: about 10% lighter. Build the reps back up and you\'ll pass your old best within a few weeks.' };
+    save();
+    render();
+    toast('10% lighter today: build back up from here');
+  },
   swapAllGear() { ui.sheet.allGear = !ui.sheet.allGear; renderSheet(); },
   hurtAvoid() {
     const e = state.activeWorkout.exercises[ui.sheet.ei];
@@ -3891,7 +3972,8 @@ const actions = {
     st.pr = pr;
     unlockAudio();
     afterSet(c);
-    if (!st.warmup && !e.suggestion) calibrate(c);
+    if (!st.warmup && (!e.suggestion || e.suggestion.kind === 'guess')) calibrate(c);
+    else if (!st.warmup) retargetRest(c);
     save();
     if (pr) { prToast(`${ex.name}: ${weightLabel(ex, st.weight)} × ${st.reps}`); navigator.vibrate?.([30, 40, 30]); }
     render();

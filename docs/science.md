@@ -58,6 +58,11 @@ of the research below measures.
 | Weights adjust for how tired a muscle is from earlier lifts that day | Earlier work for the same or helper muscles reduces reps | Simão 2012; app's own learned fatigue rate | Moderate | `engine.test` fatigue tests |
 | Rest: at least 2 min on big compound lifts, 3 min on strength sets (3-6 reps), your default on isolation | Longer rests keep reps up and build more muscle and strength | Schoenfeld et al. 2016 (3 vs 1 min); Singer et al. 2024 (meta-analysis) | Moderate-strong | `science.test` rest |
 | New lift: targets set from the first set, assuming ~2 reps left in reserve | Safe start without history | Practical | Practical | `simulate.test` calibration |
+| New lift with another version done before (barbell to dumbbell bench): a rough starting weight converted from it, then set from your first set | A closer start than guessing | Practical | Practical | browser check |
+| A set 2+ reps off its goal re-targets the rest of that lift today | Day-to-day strength varies; following today keeps sets near the planned effort | Autoregulation reviews (e.g. Larsen et al. 2021) | Moderate | `audit.test` |
+| Mixed-weight sessions (pyramids, top set + back-offs) keep their pattern; one-off heavy singles are not the working weight | Progress what you actually did | Practical | Practical | `audit.test` |
+| Small isolation lifts add reps up to 15 before a jump of more than 15% | Growth is similar across a wide rep range when sets are hard | Schoenfeld et al. 2017 | Strong (rep range); practical (the 15% line) | `engine.test`, `simulate.test` |
+| After 3 sessions without progress: offer 10% lighter, an extra set, or a swap | Plateaus respond to a change in load, volume or exercise | Practical, consistent with Kassiano 2022 | Practical | `audit.test` |
 
 ## Weekly schedule and recovery
 
@@ -73,7 +78,7 @@ of the research below measures.
 | Last week's shortfall carried into this week, at most a quarter of the weekly goal | Weekly volume is what drives growth, so a small make-up keeps the average on target without one overloaded week | Follows from the volume rules (Pelland 2024) | Practical | `plancontrol.test` shortfall |
 | Timed holds: 20-90 s, +5 s when every goal is hit, harder version past 90 s | Longer holds add little; progressing the exercise is the overload | McGill (core endurance work); practical | Practical | `engine.test` holds |
 | Deloads only when lifts stall or drop | Scheduled deloads can cost progress; deload when needed | Coleman et al. 2024 | Moderate | `engine.test`, `insights.test` deload |
-| After a break of 2+ weeks, the first week has ~30% less volume and weights drop ~10% | Strength holds for ~3 weeks then fades; easing back avoids soreness and injury | Bosquet et al. 2013 (detraining); practical | Moderate | `plancontrol.test` breaks |
+| After a break of 2+ weeks, the first week has ~30% less volume; weights drop 10% (2-4 weeks off), 15% (to 2 months), 20% (to 4 months), 25% (longer) | Strength holds for ~3 weeks then fades with time; easing back avoids soreness and injury | Bosquet et al. 2013 (detraining); practical | Moderate | `plancontrol.test` breaks, `audit.test` |
 | Rough day (2 of: poor sleep, very sore, low energy): one set off accessories | Poor sleep and fatigue reduce performance | Knowles et al. 2018 | Moderate | `planner.test` readiness |
 
 ## Form tips
