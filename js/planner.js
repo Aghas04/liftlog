@@ -25,7 +25,7 @@ const ANTAGONIST = { chest: 'back', back: 'chest', biceps: 'triceps', triceps: '
 // Day types plans are built from. `only` limits a muscle to some regions
 // (e.g. push days train front/side delts; pull days train rear delts).
 export const PLAN_DAYS = {
-  full: { name: 'Full Body', icon: '🔄', color: '#5ee0a0', muscles: ['chest', 'back', 'quads', 'hamstrings', 'shoulders', 'glutes', 'biceps', 'triceps', 'calves', 'abs'] },
+  full: { name: 'Full Body', icon: '🔄', color: '#5ee0a0', muscles: ['chest', 'back', 'quads', 'hamstrings', 'shoulders', 'glutes', 'biceps', 'triceps', 'calves', 'abs', 'adductors'] },
   upper: { name: 'Upper', icon: '💪', color: '#9b8cff', muscles: ['chest', 'back', 'shoulders', 'biceps', 'triceps', 'forearms'] },
   lower: { name: 'Lower', icon: '🦵', color: '#ff9447', muscles: ['quads', 'hamstrings', 'glutes', 'calves', 'adductors', 'abs'] },
   push: { name: 'Push', icon: '🔥', color: '#ff5f9e', muscles: ['chest', 'shoulders', 'triceps'], only: { shoulders: ['delt_front', 'delt_side'] } },
@@ -411,16 +411,27 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
   if (trimmed) notes.push(`Time limit: ${trimmed} set${trimmed > 1 ? 's' : ''} trimmed`);
   // A dropped accessory can leave its superset partner alone.
   for (const it of items) if (it.superset && items.filter(x => x.superset === it.superset).length < 2) delete it.superset;
-  // Partners sit next to each other, where the later one was. Partners are
-  // both compounds or both isolation, so compounds still come first.
+  items.splice(0, items.length, ...groupSupersets(items));
+  return { items, estMinutes: Math.round(timeOf() / 60), notes };
+}
+
+// Partners sit next to each other, where the later one was. Partners are
+// both compounds or both isolation, so compounds still come first.
+function groupSupersets(items) {
   const ordered = [];
   items.forEach((it, i) => {
     if (!it.superset) { ordered.push(it); return; }
     const group = items.filter(x => x.superset === it.superset);
     if (items.lastIndexOf(group.at(-1)) === i) ordered.push(...group);
   });
-  items.splice(0, items.length, ...ordered);
-  return { items, estMinutes: Math.round(timeOf() / 60), notes };
+  return ordered;
+}
+
+// A session's full order: core compound lifts lead, then the shared order
+// rules, then superset partners side by side.
+function sessionOrder(items, priority) {
+  const sorted = [...items].sort((a, b) => (b.core && b.compound) - (a.core && a.compound));
+  return groupSupersets(orderExercises(sorted, priority));
 }
 
 /**
@@ -557,7 +568,7 @@ export function planWeek(input) {
     for (const m of Object.keys(targets)) {
       const gap = Math.round(targets[m] - (prevDone[m] || 0));
       const add = Math.min(gap, Math.ceil(targets[m] * 0.25), Math.max(0, volumeBounds(profile, m)[1] - targets[m]));
-      if (add > 0) { targets[m] += add; made.push(`${MUSCLES[m].toLowerCase()} +${add}`); }
+      if (add > 0) { targets[m] += add; goals[m] += add; made.push(`${MUSCLES[m].toLowerCase()} +${add}`); }
     }
     if (made.length) notes.push(`Making up for last week: ${made.join(', ')} sets`);
   }
@@ -588,6 +599,10 @@ export function planWeek(input) {
       for (const [m, wt] of Object.entries(indirectByMuscle(ex))) if (!MAJOR.includes(m)) doneMuscle[m] = (doneMuscle[m] || 0) + wt * n;
     }
   }
+  // Muscles this split never trains directly (forearms on full-body days) get
+  // only indirect work: no goal to hit or show.
+  const trainedBySplit = new Set(split.rotation.flatMap(t => PLAN_DAYS[t].muscles));
+  for (const m of Object.keys(MUSCLES)) if (!trainedBySplit.has(m)) { targets[m] = 0; goals[m] = 0; }
   const remaining = Object.fromEntries(Object.keys(MUSCLES).map(m => [m, Math.max(0, targets[m] - (doneMuscle[m] || 0))]));
   const sessionsWith = m => order.filter(o => PLAN_DAYS[o.type].muscles.includes(m));
 
@@ -645,14 +660,82 @@ export function planWeek(input) {
   assign(Object.keys(MUSCLES).filter(m => !MAJOR.includes(m)));
 
   // Build each session.
+  const restSec = Math.max(60, secPerSet - 40);
+  const built = sessions.map((s, i) => buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec, perLift }));
+
+  // Make the week add up. Count what's done plus what's planned exactly the way
+  // the weekly card does (each lift's own indirect work), then trim or add
+  // direct sets until every muscle lands on its target. The split above rounds,
+  // applies minimums and estimates indirect work from one lift, so it can drift.
+  const credit = (t, exId, n) => {
+    const ex = lookup(exId);
+    t[ex.muscle] = (t[ex.muscle] || 0) + n;
+    for (const [mm, wt] of Object.entries(indirectByMuscle(ex))) if (!MAJOR.includes(mm)) t[mm] = (t[mm] || 0) + wt * n;
+  };
+  const doneCredit = {};
+  for (const w of inWeek.filter(x => (new Date(x.date).getDay() + 6) % 7 >= startIdx)) {
+    for (const e of w.exercises) { const n = workingSets(e).length; if (n) credit(doneCredit, e.exId, n); }
+  }
+  const totals = () => { const t = { ...doneCredit }; for (const b of built) for (const it of b.items) credit(t, it.exId, it.sets); return t; };
+  const setsIn = (b, m) => b.items.filter(it => it.muscle === m).reduce((a, it) => a + it.sets, 0);
+  const directOf = m => (directDone[m] || 0) + built.reduce((s, b) => s + setsIn(b, m), 0);
+  const setMin = it => (perLift ? 40 + restSeconds(lookup(it.exId), { base: restSec }) : secPerSet) / 60;
+  const limitMin = profile.minutes || 60;
+  for (const m of [...MAJOR, ...Object.keys(MUSCLES).filter(x => !MAJOR.includes(x))]) {
+    const goal = targets[m] || 0;
+    // Small muscles keep 40% of their goal as direct work, for the parts bigger
+    // lifts miss (the triceps long head). Heavy pressing can then put triceps a
+    // little over the goal; the weekly card says why.
+    const floor = MAJOR.includes(m) ? 0 : Math.ceil(goal * 0.4);
+    for (let guard = 0; guard < 60; guard++) {
+      const have = totals()[m] || 0;
+      if (have > goal + 0.5 && directOf(m) > floor) {
+        const cands = built.flatMap(b => b.items.filter(it => it.muscle === m && !it.main).map(it => ({ b, it })));
+        // Trim an accessory set, from the lift with the most sets.
+        const c = cands.filter(x => x.it.sets > 2).sort((a, z) => (a.it.core - z.it.core) || (z.it.sets - a.it.sets))[0];
+        if (c) { c.it.sets--; c.b.estMinutes -= setMin(c.it); continue; }
+        // Every lift is at 2 sets: drop a whole accessory if that doesn't undershoot.
+        // (A small muscle may lose its only lift in one session if other days still train it directly.)
+        const d = cands.find(x => have - x.it.sets >= goal - 0.5 && directOf(m) - x.it.sets >= floor
+          && (!x.it.core || (!MAJOR.includes(m) && built.some(b => b !== x.b && b.items.some(it => it.muscle === m)))));
+        if (d) {
+          d.b.items.splice(d.b.items.indexOf(d.it), 1);
+          d.b.reorder = true;
+          d.b.estMinutes -= d.it.sets * setMin(d.it);
+          if (d.it.superset) for (const it of d.b.items) if (it.superset === d.it.superset) delete it.superset;
+          continue;
+        }
+        break;
+      }
+      if (have < goal - 0.5) {
+        // Add a set where there's room: up to 4 per lift, the per-session cap, and the time limit.
+        const c = built.flatMap(b => b.items.filter(it => it.muscle === m && !it.main && it.sets < 4).map(it => ({ b, it })))
+          .filter(x => setsIn(x.b, m) < PER_SESSION_CAP && x.b.estMinutes + setMin(x.it) <= limitMin + 0.5)
+          .sort((a, z) => (setsIn(a.b, m) - setsIn(z.b, m)) || (z.it.core - a.it.core))[0];
+        if (c) { c.it.sets++; c.b.estMinutes += setMin(c.it); continue; }
+      }
+      break;
+    }
+  }
+  // Removing a lift can leave two of one muscle back to back: order again.
   sessions.forEach((s, i) => {
-    const built = buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec: Math.max(60, secPerSet - 40), perLift });
+    const b = built[i];
+    if (!b.reorder) return;
+    const rank = PLAN_DAYS[s.type].muscles;
+    const byDay = b.items.map((it, k) => ({ it, k })).sort((x, y) => (rank.indexOf(x.it.muscle) - rank.indexOf(y.it.muscle)) || (x.k - y.k)).map(x => x.it);
+    b.items = sessionOrder(byDay, profile.priority || []);
+  });
+  const after = totals();
+  const short = Object.keys(MUSCLES).filter(m => (targets[m] || 0) > 0 && (after[m] || 0) < targets[m] - 1.5 && sessionsWith(m).length);
+  if (short.length) notes.push(`${short.map(m => MUSCLES[m]).join(', ')}: below this week's goal. Your days and session length can't fit more this week; next week makes up part of it.`);
+
+  sessions.forEach((s, i) => {
     const day = remainingDays[i];
     out[day].kind = 'train';
     out[day].session = {
       seq: s.seq, type: s.type, slot: s.slot,
       name: `${PLAN_DAYS[s.type].name} ${slotLetter(s.slot)}`,
-      items: built.items, estMinutes: built.estMinutes, notes: built.notes,
+      items: built[i].items, estMinutes: Math.round(built[i].estMinutes), notes: built[i].notes,
     };
   });
   for (const d of out) {

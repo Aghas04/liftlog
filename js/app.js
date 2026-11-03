@@ -1618,7 +1618,7 @@ function viewPlan() {
   ${week.notes.length ? `<div class="plan-notes">${week.notes.map(n => `<p>ℹ️ ${esc(n)}</p>`).join('')}</div>` : ''}
   ${vol ? `<details class="card vol-card"><summary>Sets per muscle this week</summary>
     <p class="muted small">Mon–Sun. Solid = done in any workout, light = still planned, out of your usual weekly goal.${partial ? ' Your plan started mid-week, so this week ends below the goal.' : ''}</p>${vol}
-    <p class="muted small">Small muscles also count half of the sets they get from bigger lifts (triceps from presses, for example).</p></details>` : ''}
+    <p class="muted small">Small muscles also count half of the sets they get from bigger lifts (triceps from presses, for example), the way the research counts them. They can sit a little over the goal: they always keep some direct work for the parts bigger lifts miss, like the triceps long head.</p></details>` : ''}
   <div class="plan-actions">
     <button class="btn" data-act="planDaysSheet">📅 Change days this week</button>
     <button class="btn" data-act="planRegen">🔄 Regenerate upcoming workouts</button>
