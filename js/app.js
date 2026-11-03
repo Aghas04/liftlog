@@ -16,7 +16,7 @@ import {
   suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
   personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor, deloadSuggestion, deloadSetCount, retargetFrom, workWeightOf,
 } from './engine.js';
-import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter, weeklyTargets } from './planner.js';
+import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter, weeklyTargets, goalSizing } from './planner.js';
 import {
   createPlan, blockedLifts, maintainPlan, currentWeek, upcomingDays, weekVolume, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
   unexclude, dropFromBlock, sessionEntries, runReview, approveReview, postponeReview, reviewDue, isPaused, blockWeek,
@@ -1613,7 +1613,13 @@ function viewPlan() {
   const vol = Object.entries(wv).filter(([, v]) => v.goal > 0)
     .map(([m, v]) => `<div class="vol-row"><span>${MUSCLES[m]}</span>
       <div class="vol-bar"><i style="width:${pct(v.done, v.goal)}%"></i><i class="planned" style="width:${Math.max(0, Math.min(100 - pct(v.done, v.goal), pct(v.planned, v.goal)))}%"></i></div>
-      <small>${v.done + v.planned}/${v.goal}</small><em>${v.done} done · ${v.planned} planned</em></div>`).join('');
+      <small>${v.done + v.planned}/${v.goal}</small><em>${v.done} done · ${v.planned} planned${v.usual ? ` · usual goal ${v.usual}` : ''}</em></div>`).join('');
+  // Why the goal is what it is: the level's most, sized to session length.
+  const sz = goalSizing(plan.profile, pace());
+  const lvlName = { beginner: 'beginners', intermediate: 'intermediate lifters', advanced: 'advanced lifters' }[plan.profile.level] || 'your level';
+  const sizing = sz.goal < sz.max
+    ? `<p class="muted small">Big muscles aim for ${sz.goal} sets a week. The most for ${lvlName} is ${sz.max}; the goal is sized to what your ${plan.profile.minutes}-minute sessions hold at your pace (about ${Math.round(pace() / 6) / 10} min a set).${sz.minutesForMax > plan.profile.minutes ? ` Sessions of about ${sz.minutesForMax} minutes would allow ${sz.max} (change it in Plan settings).` : ''}</p>`
+    : `<p class="muted small">Big muscles aim for ${sz.goal} sets a week, the most for ${lvlName}.</p>`;
   const partial = week.notes.some(n => /mid-week/.test(n));
   return `
   <div class="top"><div><div class="eyebrow">Block ${plan.blockNo || 1} · week ${bw} of ${plan.blockWeeks || 5}</div><h1 class="plan-title">${esc(split.name)}</h1></div>
@@ -1624,7 +1630,7 @@ function viewPlan() {
   <div class="plan-week scroller" id="planScroll">${rows}</div>
   ${week.notes.length ? `<div class="plan-notes">${week.notes.map(n => `<p>ℹ️ ${esc(n)}</p>`).join('')}</div>` : ''}
   ${vol ? `<details class="card vol-card"><summary>Sets per muscle this week</summary>
-    <p class="muted small">Mon–Sun. Solid = done in any workout, light = still planned, out of your usual weekly goal.${partial ? ' Your plan started mid-week, so this week ends below the goal.' : ''}</p>${vol}
+    <p class="muted small">Mon–Sun. Solid = done in any workout, light = still planned, out of this week's goal.${partial ? ' Your plan started mid-week, so this week aims for the days left (each session its normal size, no cramming); next week aims for the usual goal.' : ''}</p>${sizing}${vol}
     <p class="muted small">Small muscles also count half of the sets they get from bigger lifts (triceps from presses, for example), the way the research counts them; glutes and shoulders get half credit from squats, lunges, deadlifts and presses. Some can sit a little over the goal: small muscles always keep some direct work for the parts bigger lifts miss, like the triceps long head.</p></details>` : ''}
   <div class="plan-actions">
     <button class="btn" data-act="planDaysSheet">📅 Change days this week</button>

@@ -68,3 +68,20 @@ test('advanced plans aim for the most growth: up to 30 sets with long sessions, 
   for (const m of MAJOR.filter(x => x !== 'shoulders')) assert.ok(ppl.goals[m] <= 20, `${m}: ${ppl.goals[m]}`);
   assert.ok(ppl.goals.shoulders <= 30);
 });
+
+test('a plan made mid-week shows this week\'s smaller aim and the usual goal; the session length for the most is accurate', async () => {
+  const { goalSizing } = await import('../js/planner.js');
+  const profile = { days: [0, 1, 2, 3, 4, 5], minutes: 120, level: 'advanced', goal: 'muscle', priority: [], equipment: 'gym', activities: [], avoid: [] };
+  const tue = MON + 864e5;
+  const plan = createPlan({ profile, splitId: 'upper_lower', exercises: ctx.exercises, usage: {}, workouts: [], lookup, now: tue });
+  const v = weekVolume(currentWeek(plan, [], lookup, tue, 160, ctx), [], lookup);
+  assert.equal(v.chest.usual, 25);
+  assert.equal(v.chest.goal, 21, '5 of 6 days left');
+  assert.ok(Math.abs(v.chest.planned - v.chest.goal) <= 1);
+  const next = weekVolume(currentWeek(plan, [], lookup, MON + 7 * 864e5, 160, ctx), [], lookup);
+  assert.equal(next.chest.goal, 25);
+  assert.equal(next.chest.usual, undefined);
+  const sz = goalSizing(profile, 160);
+  assert.equal(sz.goal, 25);
+  assert.equal(goalSizing({ ...profile, minutes: sz.minutesForMax }, 160).goal, 30, 'the suggested session length really reaches the most');
+});

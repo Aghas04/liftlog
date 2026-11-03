@@ -139,6 +139,25 @@ export function weeklyTargets(profile, overrides = {}, secPerSet = 130) {
   return out;
 }
 
+/**
+ * Why the big-muscle goal is what it is: the level's most, and roughly how
+ * long sessions would need to be to reach it (weekly goals are sized to your
+ * session length and pace). Returns { goal, max, minutesForMax }.
+ */
+export function goalSizing(profile, secPerSet = 130) {
+  const lvl = LEVELS[profile.level] || LEVELS.intermediate;
+  const goal = weeklyTargets(profile, {}, secPerSet).chest;
+  const max = volumeBounds(profile, 'chest')[1];
+  const days = (profile.days || []).length || 1;
+  // The weekly sets every muscle would need at the level's most, as sessions hold them.
+  const need = Object.keys(MUSCLES).reduce((a, m) => {
+    const t = Math.min(lvl.max * (SIZE_FACTOR[m] || 1), volumeBounds(profile, m)[1]) * (m === 'abs' ? lvl.base / lvl.max : 1);
+    return a + t * (INDIRECT_SHARE[m] ? 1 - INDIRECT_SHARE[m] : 1);
+  }, 0);
+  const minutesForMax = Math.ceil(((need / (days * TIME_FILL)) * secPerSet) / 60 / 5) * 5;
+  return { goal, max, minutesForMax };
+}
+
 export const volumeBounds = (profile, m) => {
   const lvl = LEVELS[profile.level] || LEVELS.intermediate;
   const f = SIZE_FACTOR[m] || 1;
@@ -826,7 +845,9 @@ export function planWeek(input) {
   }
   if (missed) notes.push(`${missed} missed day${missed > 1 ? 's' : ''} this week: the rotation picks up where you left off and the remaining days carry a bit more volume`);
   if (order.length && sessionsWith('quads').length === 0 && sessionsWith('chest').length === 0) notes.push('Rest of the week is light');
-  return { weekStart: ws, days: out, notes, targets, goals };
+  // A mid-week start aims for the days left: show that as this week's goal.
+  const weekGoals = midWeek < 1 ? Object.fromEntries(Object.keys(goals).map(m => [m, goals[m] > 0 ? Math.round(goalFor(m)) : 0])) : null;
+  return { weekStart: ws, days: out, notes, targets, goals, ...(weekGoals ? { weekGoals } : {}) };
 }
 
 /**

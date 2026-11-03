@@ -249,7 +249,11 @@ export function upcomingDays(plan, workouts, lookup, now = Date.now(), secPerSet
  */
 export function weekVolume(week, workouts, lookup) {
   const out = {};
-  for (const [m, g] of Object.entries(week.goals || {})) if (g > 0) out[m] = { done: 0, planned: 0, goal: g };
+  // usual: the normal weekly goal when this week aims lower (a plan started mid-week).
+  for (const [m, g] of Object.entries(week.goals || {})) {
+    const wg = week.weekGoals?.[m] ?? g;
+    if (g > 0) out[m] = { done: 0, planned: 0, goal: wg, ...(wg !== g ? { usual: g } : {}) };
+  }
   const add = (m, key, v) => { (out[m] ||= { done: 0, planned: 0, goal: 0 })[key] += v; };
   const credit = (exId, n, key) => {
     const ex = lookup(exId);
