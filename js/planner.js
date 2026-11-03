@@ -74,7 +74,10 @@ export const splitById = id => SPLITS.find(s => s.id === id);
  * Exercise order for a session. items: [{ muscle, compound, ... }] in
  * priority order (most important first). Evidence-based rules:
  * 1. Multi-joint lifts for big muscles first, priority muscles first among
- *    them: what's done first improves most (Simão 2012; Nunes 2021).
+ *    them: what's done first improves most (Simão 2012; Nunes 2021). They
+ *    alternate between muscles (press, row, press, pulldown) instead of three
+ *    presses in a row, so each lift starts less tired; alternating opposing
+ *    muscles keeps reps up (Robbins et al. 2010).
  * 2. Other compound lifts next, before any isolation work, so small helper
  *    muscles (biceps, triceps) aren't tired before the big lifts that need them.
  * 3. Isolation lifts alternate between muscles instead of stacking one muscle
@@ -86,7 +89,15 @@ export function orderExercises(items, priority = []) {
   const rankOf = new Map();
   items.forEach((it, i) => { if (!rankOf.has(it.muscle)) rankOf.set(it.muscle, i); });
   const byRank = (a, b) => pri(a.muscle) - pri(b.muscle) || rankOf.get(a.muscle) - rankOf.get(b.muscle);
-  const big = items.filter(it => it.compound && MAJOR.includes(it.muscle)).sort(byRank);
+  // Each muscle's lifts keep their order (its main lift first); rounds go
+  // muscle by muscle: every big muscle's first lift, then every second one.
+  const bigQ = new Map();
+  for (const it of items.filter(x => x.compound && MAJOR.includes(x.muscle)).sort(byRank)) {
+    if (!bigQ.has(it.muscle)) bigQ.set(it.muscle, []);
+    bigQ.get(it.muscle).push(it);
+  }
+  const big = [];
+  while ([...bigQ.values()].some(q => q.length)) for (const q of bigQ.values()) if (q.length) big.push(q.shift());
   const otherCompound = items.filter(it => it.compound && !MAJOR.includes(it.muscle)).sort(byRank);
   const iso = items.filter(it => !it.compound);
   // Round-robin the isolation lifts by muscle, never the same muscle twice in a row if avoidable.

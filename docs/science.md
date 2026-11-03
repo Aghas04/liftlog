@@ -48,6 +48,7 @@ of the research below measures.
 | Rule | Why | Evidence | Strength | Checked by |
 |---|---|---|---|---|
 | Multi-joint lifts for big muscles first, priority muscles first among them | Exercises done first improve most and allow heavier loads | Simão et al. 2012 (review); Nunes et al. 2021 | Strong | `science.test` order rules |
+| Big compound lifts alternate between muscles (press, row, shoulder press, then the second press and row) instead of stacking one muscle | Each lift starts less tired, and alternating opposing muscles keeps reps up and saves time | Simão 2012; Robbins et al. 2010 (paired antagonist sets) | Moderate | `science.test` compound alternation |
 | Small-muscle compounds and isolation after the big lifts | Tired biceps or triceps limit the big lifts that need them | Simão 2012 | Strong | `science.test` order rules |
 | Isolation lifts alternate between muscles instead of stacking one muscle back to back | Each muscle gets some recovery between its lifts, keeping reps up; four curls in a row piles fatigue on one small muscle | Simão 2012; pre-exhaustion studies (e.g. Augustsson 2003) | Moderate | `science.test` isolation alternation |
 | Supersets of unrelated or opposing muscles when a session runs over time | Saves a lot of time with similar results | Iversen et al. 2021 | Moderate | `planner.test` supersets |

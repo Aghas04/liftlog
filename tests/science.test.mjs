@@ -194,3 +194,19 @@ test('coverage: every setup equipment choice can train every part of every muscl
     }
   }
 });
+
+test('plans: big compound lifts alternate between muscles (press, row, press) instead of stacking one muscle', () => {
+  for (const split of SPLITS) {
+    const profile = { days: [0, 1, 2, 3, 4, 5].slice(0, split.days[1]), minutes: 120, level: 'advanced', goal: 'muscle', priority: [], equipment: 'gym', activities: [] };
+    const slots = buildBlock({ profile, splitId: split.id, exercises: EXERCISES.filter(e => e.common), lookup, workouts: [], now: MONDAY });
+    const week = planWeek({ profile, plan: { splitId: split.id, slots, volume: {}, weekDays: {}, weekEdits: {} }, lookup, now: MONDAY });
+    for (const d of week.days.filter(x => x.kind === 'train')) {
+      const big = d.session.items.filter(i => !i.superset && i.compound && MAJOR.includes(i.muscle));
+      const muscles = new Set(big.map(i => i.muscle));
+      if (muscles.size < 2) continue;
+      // The first round reaches every big muscle before any muscle's second lift.
+      const firstRound = big.slice(0, muscles.size).map(i => i.muscle);
+      assert.equal(new Set(firstRound).size, muscles.size, `${split.id} ${d.session.name}: ${big.map(i => i.muscle).join(', ')}`);
+    }
+  }
+});
