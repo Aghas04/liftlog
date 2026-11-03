@@ -389,7 +389,9 @@ test('2-hour sessions use the extra time and still fit it', () => {
   const long = planWeek({ profile, plan: makePlan(profile, 'upper_lower'), lookup, now: MONDAY });
   const normal = planWeek({ profile: short, plan: makePlan(short, 'upper_lower'), lookup, now: MONDAY });
   const sets = w => w.days.filter(d => d.kind === 'train').reduce((a, d) => a + d.session.items.reduce((b, i) => b + i.sets, 0), 0);
-  assert.ok(sets(long) > sets(normal) * 1.2, `${sets(long)} vs ${sets(normal)}`);
+  assert.ok(sets(long) > sets(normal), `${sets(long)} vs ${sets(normal)}`);
+  // The extra time takes big muscles to the level's most.
+  for (const m of MAJOR) assert.equal(long.targets[m], volumeBounds(profile, m)[1], m);
   for (const d of long.days.filter(x => x.kind === 'train')) assert.ok(d.session.estMinutes <= 120, `${d.session.name} ${d.session.estMinutes} min`);
 });
 

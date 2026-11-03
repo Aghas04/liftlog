@@ -264,6 +264,7 @@ function startWorkout(dayId, from, template, name, extra = {}, readiness = null)
   for (const e of from?.exercises || []) {
     const entry = buildEntry(e.exId, null, fatigueFor(e.exId, w.exercises.length), e.zone);
     if (e.group) entry.group = groups[e.group] ||= uid();
+    if (e.rest) entry.rest = e.rest;
     // Planned set counts shrink in a deload week, like the suggestion's own sets do.
     if (e.sets > 0) resizeSets(entry, inDeload() ? deloadSetCount(e.sets) : e.sets);
     w.exercises.push(entry);
@@ -1615,10 +1616,10 @@ function viewPlan() {
       <div class="vol-bar"><i style="width:${pct(v.done, v.goal)}%"></i><i class="planned" style="width:${Math.max(0, Math.min(100 - pct(v.done, v.goal), pct(v.planned, v.goal)))}%"></i></div>
       <small>${v.done + v.planned}/${v.goal}</small><em>${v.done} done · ${v.planned} planned${v.usual ? ` · usual goal ${v.usual}` : ''}</em></div>`).join('');
   // Why the goal is what it is: the level's most, sized to session length.
-  const sz = goalSizing(plan.profile, pace());
+  const sz = goalSizing(plan.profile, pace(), plan.splitId);
   const lvlName = { beginner: 'beginners', intermediate: 'intermediate lifters', advanced: 'advanced lifters' }[plan.profile.level] || 'your level';
   const sizing = sz.goal < sz.max
-    ? `<p class="muted small">Big muscles aim for ${sz.goal} sets a week. The most for ${lvlName} is ${sz.max}; the goal is sized to what your ${plan.profile.minutes}-minute sessions hold at your pace (about ${Math.round(pace() / 6) / 10} min a set).${sz.minutesForMax > plan.profile.minutes ? ` Sessions of about ${sz.minutesForMax} minutes would allow ${sz.max} (change it in Plan settings).` : ''}</p>`
+    ? `<p class="muted small">Big muscles aim for ${sz.goal} sets a week. The most for ${lvlName} is ${sz.max}; ${sz.splitCap && sz.splitCap <= sz.goal ? `this split trains each muscle ${sz.freq} times a week, at most 10 sets a session, so ${sz.splitCap} is what it holds (Upper / Lower or Full Body on 6 days reaches ${sz.max}).` : `the goal is sized to what your ${plan.profile.minutes}-minute sessions hold at your pace (about ${Math.round(pace() / 6) / 10} min a set, with 90 s rests on isolation lifts).${sz.minutesForMax > plan.profile.minutes ? ` Sessions of about ${sz.minutesForMax} minutes would allow ${sz.max}.` : ''}`}</p>`
     : `<p class="muted small">Big muscles aim for ${sz.goal} sets a week, the most for ${lvlName}.</p>`;
   const partial = week.notes.some(n => /mid-week/.test(n));
   return `
@@ -1758,7 +1759,7 @@ function setupHtml() {
         <div class="chips">${WEEKDAYS.map((n, i) => chip('suDay', i, n, d.days.includes(i))).join('')}</div></div>
       <p class="muted small">${d.days.length} day${d.days.length === 1 ? '' : 's'} a week. You can move days for a single week any time.</p>
       <div class="field"><span>How long per workout?</span>
-        <div class="chips">${[30, 45, 60, 75, 90, 120].map(v => chip('suMin', v, `${v} min`, d.minutes === v)).join('')}</div></div>
+        <div class="chips">${[30, 45, 60, 75, 90, 120, 150, 180].map(v => chip('suMin', v, `${v} min`, d.minutes === v)).join('')}</div></div>
       <p class="muted small">More time means more sets per muscle, up to the most that still pays off for your experience level. Past that, sessions end early rather than adding junk volume.</p>`;
   } else if (d.step === 1) {
     body = `<div class="field"><span>Experience</span><div class="choices">${Object.entries(LEVEL_INFO).map(([k, v]) => choice('suLevel', k, v, d.level === k)).join('')}</div></div>

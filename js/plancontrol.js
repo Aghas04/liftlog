@@ -557,6 +557,7 @@ export function sessionEntries(session) {
     sets: it.sets,
     ...(it.main ? { zone: STRENGTH_ZONE } : {}),
     ...(it.superset ? { group: it.superset } : {}),
+    ...(it.rest ? { rest: it.rest } : {}),
   }));
 }
 

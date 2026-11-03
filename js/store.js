@@ -134,9 +134,11 @@ export function setExSetting(exId, key, value) {
 }
 
 // Rest before the next set (engine.restSeconds has the rules and evidence).
+// Your own rest for a lift wins; then the rest the plan set for it today
+// (90 s on isolation lifts when the session needs the time).
 export function restFor(exId) {
-  const zone = state.activeWorkout?.exercises.find(e => e.exId === exId)?.zone;
-  return restSeconds(exercise(exId), { own: state.exerciseSettings[exId]?.rest, base: state.settings.defaultRest, zone });
+  const entry = state.activeWorkout?.exercises.find(e => e.exId === exId);
+  return restSeconds(exercise(exId), { own: state.exerciseSettings[exId]?.rest ?? entry?.rest, base: state.settings.defaultRest, zone: entry?.zone });
 }
 
 // Latest bodyweight on or before a date (ISO string), or null.

@@ -75,13 +75,17 @@ test('a plan made mid-week shows this week\'s smaller aim and the usual goal; th
   const tue = MON + 864e5;
   const plan = createPlan({ profile, splitId: 'upper_lower', exercises: ctx.exercises, usage: {}, workouts: [], lookup, now: tue });
   const v = weekVolume(currentWeek(plan, [], lookup, tue, 160, ctx), [], lookup);
-  assert.equal(v.chest.usual, 25);
-  assert.equal(v.chest.goal, 21, '5 of 6 days left');
+  assert.equal(v.chest.usual, 30, '6 days x 120 min reaches the advanced most');
+  assert.equal(v.chest.goal, 25, '5 of 6 days left');
   assert.ok(Math.abs(v.chest.planned - v.chest.goal) <= 1);
   const next = weekVolume(currentWeek(plan, [], lookup, MON + 7 * 864e5, 160, ctx), [], lookup);
-  assert.equal(next.chest.goal, 25);
+  assert.equal(next.chest.goal, 30);
   assert.equal(next.chest.usual, undefined);
-  const sz = goalSizing(profile, 160);
-  assert.equal(sz.goal, 25);
-  assert.equal(goalSizing({ ...profile, minutes: sz.minutesForMax }, 160).goal, 30, 'the suggested session length really reaches the most');
+  // Shorter sessions: the suggested length really reaches the most.
+  const p90 = { ...profile, minutes: 75 };
+  const sz = goalSizing(p90, 160, 'upper_lower');
+  assert.ok(sz.goal < 30);
+  assert.equal(goalSizing({ ...p90, minutes: sz.minutesForMax }, 160, 'upper_lower').goal, 30);
+  // Push/pull/legs on 6 days holds 20 for chest, and says so.
+  assert.equal(goalSizing(profile, 160, 'ppl').splitCap, 20);
 });
