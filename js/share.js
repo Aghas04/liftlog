@@ -67,7 +67,9 @@ export function workoutCard(card) {
   // Lifts
   ctx.textAlign = 'left';
   let y = 770;
-  for (const [name, detail, pr] of card.lifts.slice(0, 6)) {
+  // Six rows fit; with more, five and a "+N more" line.
+  const shown = card.lifts.length > 6 ? card.lifts.slice(0, 5) : card.lifts;
+  for (const [name, detail, pr] of shown) {
     ctx.fillStyle = pr ? 'rgba(255,201,75,0.14)' : 'rgba(255,255,255,0.04)';
     roundRect(ctx, 60, y - 52, W - 120, 78, 20);
     ctx.fill();
@@ -80,6 +82,13 @@ export function workoutCard(card) {
     ctx.fillText(fit(ctx, detail, 400), W - 90, y);
     ctx.textAlign = 'left';
     y += 92;
+  }
+  if (shown.length < card.lifts.length) {
+    const more = card.lifts.slice(shown.length);
+    const prs = more.filter(l => l[2]).length;
+    ctx.fillStyle = '#8b93a1';
+    ctx.font = font(700, 30);
+    ctx.fillText(`+${more.length} more lift${more.length > 1 ? 's' : ''}${prs ? ` · ${prs} more PR${prs > 1 ? 's' : ''}` : ''}`, 90, y - 10);
   }
 
   ctx.textAlign = 'center';

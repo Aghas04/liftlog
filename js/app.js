@@ -474,10 +474,12 @@ function celebrate(w, prs, fresh = []) {
   const sets = w.exercises.reduce((n, e) => n + workingSets(e).length, 0);
   const mins = Math.max(1, Math.round((new Date(w.finishedAt) - new Date(w.date)) / 60000));
   const { streak } = weekStats();
+  const prRow = p => `<div class="cel-pr"><span>🏆</span><div><b>${esc(p.name)}</b><small>New best · ${dispW(p.now)} ${wu()} est. 1RM (+${dispW(p.now - p.prev)})</small></div></div>`;
   const el = document.createElement('div');
   el.className = 'celebrate';
   el.style.setProperty('--c', dt.color);
   el.innerHTML = `
+    <button class="cel-x" data-act="closeCelebrate" aria-label="Close">✕</button>
     <div class="cel-inner">
       <div class="cel-ico">${dt.icon}</div>
       <div class="eyebrow">Workout complete</div>
@@ -487,10 +489,11 @@ function celebrate(w, prs, fresh = []) {
         <div><b data-count="${sets}">0</b><span>sets</span></div>
         <div><b data-count="${dispW(workoutVolume(w))}">0</b><span>${wu()} moved</span></div>
       </div>
-      ${prs.length ? `<div class="cel-prs">${prs.map(p => `<div class="cel-pr"><span>🏆</span><div><b>${esc(p.name)}</b><small>New best · ${dispW(p.now)} ${wu()} est. 1RM (+${dispW(p.now - p.prev)})</small></div></div>`).join('')}</div>` : ''}
+      ${prs.length ? `<div class="cel-prs">${prs.slice(0, 4).map(prRow).join('')}</div>` : ''}
+      ${prs.length > 4 ? `<details class="cel-more"><summary>+${prs.length - 4} more PRs</summary><div class="cel-prs">${prs.slice(4).map(prRow).join('')}</div></details>` : ''}
       ${fresh.length ? `<div class="cel-awards">${fresh.map(a => `<div class="cel-aw"><span>${a.icon}</span><div><small>Achievement unlocked</small><b>${esc(a.name)}</b></div></div>`).join('')}</div>` : ''}
       ${streak ? `<div class="cel-streak">🔥 ${streak}-week streak — keep it going</div>` : ''}
-      <div class="row">
+      <div class="row cel-btns">
         <button class="btn" data-act="shareWorkout" data-id="${w.id}">Share</button>
         <button class="btn primary" data-act="closeCelebrate">Done</button>
       </div>
@@ -3854,7 +3857,7 @@ const actions = {
       const score = s => epley(loadOf(ex, s.weight, w.date), s.reps);
       const top = ws.reduce((b, s) => (!b || score(s) > score(b) ? s : b), null);
       return [ex.name, top ? `${weightLabel(ex, top.weight)} × ${top.reps}${ws.length > 1 ? ` · ${ws.length} sets` : ''}` : '', ws.some(s => s.pr)];
-    });
+    }).sort((a, b) => b[2] - a[2]); // PRs first, so they make the card
     const blob = await workoutCard({
       color: dt.color, icon: dt.icon, title: dt.name, date: fmtDate(w.date),
       stats: [[String(mins), 'minutes'], [String(sets), 'sets'], [fmtK(toDisplay(workoutVolume(w), U())), `${wu()} moved`]],
