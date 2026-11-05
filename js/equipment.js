@@ -71,9 +71,31 @@ export const isFullGym = gear => GEAR_KEYS.every(k => gear.includes(k));
  * rep goal at a weight. Returns the suggestion unchanged when no cap applies.
  */
 export function capDumbbell(sug, ex, maxDb, repsAt) {
-  if (!sug || !maxDb || ex.equipment !== 'dumbbell' || ex.timed || !(Math.max(sug.weight, ...(sug.weights || [])) > maxDb)) return sug;
+  if (ex.equipment !== 'dumbbell') return sug;
+  return capWeight(sug, ex, maxDb, repsAt);
+}
+
+/**
+ * Any lift's heaviest weight (a maxed-out machine stack, the heaviest
+ * dumbbell): that weight with more reps, up to 30, instead of more weight.
+ * At 30 reps, the reason says to make the lift harder another way.
+ */
+export function capWeight(sug, ex, maxDb, repsAt, what = 'dumbbell') {
+  if (!sug || !maxDb || ex.timed || ex.equipment === 'bodyweight' || ex.equipment === 'assisted' || !(Math.max(sug.weight, ...(sug.weights || [])) > maxDb)) return sug;
+  const capped = capped30(sug, ex, maxDb, repsAt);
+  if (what === 'dumbbell') return capped;
+  // Past about 20 reps more reps add little (and can't be judged well): go harder.
+  // Past about 20 reps, more reps add little (and can't be judged well): go harder.
+  const top = Math.max(...capped.reps) >= 20;
+  return { ...capped, reason: top
+    ? 'Heaviest weight on this machine, and you\'re past 20 reps: make it harder another way: one leg or arm at a time, 3-second lowering, or a pause at the hardest point.'
+    : 'Heaviest weight on this machine: one more rep instead of more weight. Slow lowering or one side at a time also makes it harder.' };
+}
+
+function capped30(sug, ex, maxDb, repsAt) {
   const over = i => (sug.weights ? sug.weights[i] : sug.weight) > maxDb;
-  const reps = sug.reps.map((r, i) => (over(i) ? Math.min(30, Math.max(r, repsAt(maxDb, i) || r)) : r));
+  // One rep more than you've shown at that weight (the suggestion wanted to progress).
+  const reps = sug.reps.map((r, i) => (over(i) ? Math.min(30, Math.max(r, (repsAt(maxDb, i) || r) + 1)) : r));
   if (sug.weights) return { ...sug, weights: sug.weights.map(w => Math.min(w, maxDb)), weight: Math.min(sug.weight, maxDb), reps, capped: true, zone: [sug.zone?.[0] ?? 6, 30],
     reason: 'Heaviest dumbbell here: more reps on the sets that wanted more weight.' };
   // Rep goals may go past the usual range (up to 30) at the capped weight.

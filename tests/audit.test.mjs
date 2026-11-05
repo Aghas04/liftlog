@@ -84,7 +84,7 @@ test('heaviest dumbbell caps a mixed pattern too', () => {
   const db = EXERCISES.find(e => e.name === 'Dumbbell Bench Press');
   const c = capDumbbell({ weight: 60, weights: [60, 50], reps: [8, 10], est: 80 }, db, 55, () => 12);
   assert.deepEqual(c.weights, [55, 50]);
-  assert.deepEqual(c.reps, [12, 10]);
+  assert.deepEqual(c.reps, [13, 10], 'one rep more than shown at the capped weight');
 });
 
 test('Build today\'s workout: no advanced-only lifts unless advanced or already used', () => {

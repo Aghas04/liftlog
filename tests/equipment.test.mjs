@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EXERCISES, MUSCLES } from '../js/data.js';
-import { GEAR_KEYS, FREE_WEIGHTS, FULL_GYM, needsOf, fitsGear, isFullGym, capDumbbell } from '../js/equipment.js';
+import { GEAR_KEYS, FREE_WEIGHTS, FULL_GYM, needsOf, fitsGear, isFullGym, capDumbbell, capWeight } from '../js/equipment.js';
 import { buildWorkout } from '../js/builder.js';
 
 const byName = n => EXERCISES.find(e => e.name === n);
@@ -69,4 +69,23 @@ test('heaviest dumbbell: more reps at that dumbbell instead of a heavier one', (
   assert.equal(capDumbbell(sug, db, null, repsAt), sug, 'no cap: unchanged');
   assert.equal(capDumbbell(sug, byName('Bench Press'), 50, repsAt), sug, 'barbells are not capped');
   assert.equal(capDumbbell(null, db, 50, repsAt), null);
+});
+
+test('a maxed-out machine: the heaviest weight with more reps, up to 30, then a harder version', async () => {
+  const { suggest, targetFor } = await import('../js/engine.js');
+  const ext = byName('Leg Extension');
+  const DAY = 864e5, now = Date.UTC(2026, 10, 5);
+  const h = [{ date: new Date(now - 21 * 7 * DAY).toISOString(), sets: [12, 12, 12].map(reps => ({ weight: 200, reps, done: true })) }];
+  let prev = 0, s;
+  for (let i = 20; i >= 1; i--) {
+    s = suggest(ext, h, { increment: 10, now: now - i * 7 * DAY });
+    s = capWeight(s, ext, 200, (wt, k) => targetFor({ ...s, zone: [1, 30] }, ext, wt, k, 0), 'machine');
+    assert.equal(s.weight, 200, 'never past the machine');
+    assert.ok(s.reps[0] >= prev && s.reps[0] <= 30, `reps ${s.reps}`);
+    prev = s.reps[0];
+    h.push({ date: new Date(now - i * 7 * DAY).toISOString(), sets: s.reps.map(reps => ({ weight: 200, reps, done: true, target: { weight: 200, reps } })) });
+  }
+  assert.ok(prev >= 20, 'reps keep climbing');
+  assert.match(s.reason, /past 20 reps: make it harder/);
+  assert.equal(capWeight({ weight: 0, reps: [10] }, byName('Pull-up'), 50, () => 12, 'machine').weight, 0, 'bodyweight lifts are not capped');
 });

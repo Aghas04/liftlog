@@ -4,7 +4,7 @@ import { mergeExercise, mergePreview, moveHistory } from './merge.js';
 import { packWorkout, unpackWorkout, resolveShared } from './together.js';
 import { workoutsCsv } from './export.js';
 import { tipsFor } from './tips.js';
-import { GEAR, GEAR_KEYS, FREE_WEIGHTS, FULL_GYM, fitsGear, isFullGym, capDumbbell } from './equipment.js';
+import { GEAR, GEAR_KEYS, FREE_WEIGHTS, FULL_GYM, fitsGear, isFullGym, capDumbbell, capWeight } from './equipment.js';
 import { howTo, videoUrl, SYMPTOMS, PAIN_SYMPTOMS } from './howto.js';
 import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion, hasPaceHistory } from './builder.js';
 import {
@@ -356,7 +356,10 @@ function suggestionFor(ex, fatigue = 0, zone = null) {
     // estimates. A lighter session after missed targets still counts normally.
     sug = deloadSuggestion(sug, ex, inc, bodyweightOn());
   }
-  return capFor(sug, ex, workoutGear()?.maxDb);
+  sug = capFor(sug, ex, workoutGear()?.maxDb);
+  // The heaviest weight this lift goes to at your gym (a maxed-out machine).
+  const top = exSetting(ex.id, 'maxWeight');
+  return top ? capWeight(sug, ex, top, (wt, i) => targetFor({ ...sug, zone: [1, 30] }, ex, wt, i, bodyweightOn()), 'machine') : sug;
 }
 
 // Heaviest-dumbbell limit: that dumbbell with more reps.
@@ -2509,6 +2512,9 @@ function sheetHtml() {
         <div class="field" style="margin-top:16px"><span>Weight step for this lift (your gym's real jumps)</span>
           <div class="chips">${steps.map(v => `<button data-act="setStep" data-v="${v}" class="${Math.abs(inc - v) < 1e-6 ? 'on' : ''}">${fmtW(v)} ${wu()}</button>`).join('')}${steps.some(v => Math.abs(inc - v) < 1e-6) ? '' : `<button class="on">${fmtW(inc)} ${wu()}</button>`}</div>
         </div>
+        ${isBW(ex) || isAssist(ex) || isTimed(ex) ? '' : `<div class="field" style="margin-top:16px"><span>Heaviest weight this ${ex.equipment === 'dumbbell' ? 'dumbbell rack' : ex.equipment === 'barbell' ? 'lift' : 'machine'} goes to (optional)</span>
+          <div class="row"><input id="exMax" inputmode="decimal" value="${exSetting(e.exId, 'maxWeight') ? fmtW(toDisplay(exSetting(e.exId, 'maxWeight'), U())) : ''}" placeholder="No limit (${wu()})"><button class="btn" style="flex:0 0 80px" data-act="saveMax">Save</button></div>
+          <small class="muted">Once you reach it, the app adds reps instead of weight.</small></div>`}
         <div class="menu-list">
           <button data-act="moveEx" data-d="-1" ${s.ei === 0 ? 'disabled' : ''}><span>⬆️</span>Move up</button>
           <button data-act="moveEx" data-d="1" ${s.ei === state.activeWorkout.exercises.length - 1 ? 'disabled' : ''}><span>⬇️</span>Move down</button>
@@ -3325,6 +3331,20 @@ const actions = {
       e.sets = setsFrom(e.suggestion);
       save();
     }
+    renderSheet();
+    render();
+  },
+  saveMax() {
+    const e = state.activeWorkout.exercises[ui.sheet.ei];
+    const v = parseFloat($('#exMax').value);
+    setExSetting(e.exId, 'maxWeight', v > 0 ? fromDisplay(v, U()) : undefined);
+    // Nothing logged yet: rebuild the suggestion under the new limit.
+    if (!e.sets.some(s => s.done)) {
+      e.suggestion = suggestionFor(exercise(e.exId), fatigueAt(state.activeWorkout, ui.sheet.ei, true), e.zone);
+      e.sets = setsFrom(e.suggestion);
+    }
+    save();
+    toast(v > 0 ? `Heaviest weight saved: ${fmtW(v)} ${wu()}` : 'Limit removed');
     renderSheet();
     render();
   },
