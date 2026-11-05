@@ -430,9 +430,16 @@ export function suggest(ex, history, opts) {
     // Move up in weight until reps fall back inside the zone, but never more
     // than ~10% in one session (at least one step). Assisted: never past zero.
     const maxW = assisted ? Math.min(0, w + inc) : Math.max(w + inc, floorTo(w * 1.1, inc));
+    // Big compound lifts in the muscle range (6-12) restart near 8 reps after
+    // reaching 12: a jump of up to ~10%, then build back up. More time at
+    // heavier weights builds strength, and sets end because the muscle is
+    // done, not from breathing or form at high reps. Isolation lifts and the
+    // strength range keep the smallest step.
+    const restart = ex.compound && !isBW && !assisted && zMax >= 10;
+    const aim = restart ? zMin + 2 : zMax;
     let w2 = w;
     let t2 = t;
-    while (t2 > zMax && w2 + inc <= maxW + 1e-9) {
+    while (t2 > aim && w2 + inc <= maxW + 1e-9) {
       w2 += inc;
       t2 = Math.round(repsAt(est, loadOf(w2)));
     }
@@ -447,7 +454,8 @@ export function suggest(ex, history, opts) {
     const done = bestRepsAt(w2);
     if (t2 <= done) t2 = Math.min(zMax, done + 1);
     if (t2 >= zMin) {
-      return build(w2, t2, 'up', assisted ? `Top of the rep range last time — less assistance (${fw(-w2)}).` : `Top of the rep range last time — up to ${fw(w2)}.`);
+      return build(w2, t2, 'up', assisted ? `Top of the rep range last time — less assistance (${fw(-w2)}).`
+        : restart && t2 <= zMin + 3 ? `Top of the rep range last time — up to ${fw(w2)}: start near ${zMin + 2} reps and build back to ${zMax}.` : `Top of the rep range last time — up to ${fw(w2)}.`);
     }
     // Small isolation lift with a big next step (15 -> 20 lb lateral raises is
     // +33%): add reps up to 15 first. Growth is similar across a wide rep range

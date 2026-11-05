@@ -116,7 +116,20 @@ test('improving trend still progresses (no drag from older sessions)', () => {
   ];
   const s = suggest(row, h, { increment: 5, now: NOW });
   assert.equal(s.kind, 'up');
-  assert.equal(s.weight, 125);
+  // A compound restarts near 8 reps: a jump of up to ~10%.
+  assert.ok(s.weight > 120 && s.weight <= 132, String(s.weight));
+  assert.ok(s.reps[0] >= 7 && s.reps[0] <= 10, String(s.reps));
+});
+
+test('after reaching 12: big compounds jump up to ~10% and restart near 8; isolation and strength-range lifts take the small step', () => {
+  const bench = { equipment: 'barbell', compound: true };
+  const b = suggest(bench, [{ date: daysAgo(3), sets: sets(185, [12, 11, 10]) }], { increment: 5, now: NOW });
+  assert.ok(b.weight >= 195 && b.weight <= 205 && b.reps[0] >= 8 && b.reps[0] <= 10, `${b.weight} x ${b.reps}`);
+  assert.match(b.reason, /start near 8/);
+  const c = suggest(curl, [{ date: daysAgo(3), sets: sets(40, [12, 12]) }], { increment: 2.5, now: NOW });
+  assert.equal(c.weight, 42.5, 'isolation: smallest step');
+  const sq = suggest(bench, [{ date: daysAgo(3), sets: sets(225, [6, 6, 6]) }], { increment: 5, now: NOW, zone: [3, 6] });
+  assert.equal(sq.weight, 230, 'strength range: smallest step');
 });
 
 test('a bad day is softened by the session before', () => {
