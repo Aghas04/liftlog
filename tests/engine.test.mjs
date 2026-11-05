@@ -350,3 +350,24 @@ test('holds: 5 seconds longer after hitting every goal, same after a miss, harde
   assert.equal(loadFor(plank, 0, 180), 0);
   assert.equal(targetFor(a, plank, 0, 1, 180), 45);
 });
+
+test('weight goes up only when every set is within 2 reps of the best; a big drop-off holds and brings later sets up', () => {
+  const bench = { equipment: 'barbell', compound: true };
+  const at = r => suggest(bench, [{ date: daysAgo(3), sets: sets(185, r) }], { increment: 5, now: NOW });
+  const drop = at([12, 8, 6]);
+  assert.equal(drop.weight, 185);
+  assert.deepEqual(drop.reps, [12, 9, 7]);
+  assert.ok(drop.restTip, 'a 12 -> 8 -> 6 drop on a big lift gets the rest tip');
+  assert.equal(at([12, 10, 8]).weight, 185);
+  assert.ok(at([12, 11, 10]).weight > 185, 'within 2 reps: up');
+  assert.ok(at([12, 12, 12]).weight > 185);
+  // Hitting every goal from 12, 8, 6: a few weeks at 185, then up.
+  const h = [{ date: daysAgo(70), sets: sets(185, [12, 8, 6]) }];
+  let w = 185, weeks = 0;
+  for (let i = 9; i >= 1 && w === 185; i--) {
+    const s = suggest(bench, h, { increment: 5, now: NOW - i * 7 * 864e5 });
+    w = s.weight; weeks++;
+    h.push({ date: new Date(NOW - i * 7 * 864e5).toISOString(), sets: s.reps.map(reps => ({ weight: s.weight, reps, done: true, target: { weight: s.weight, reps } })) });
+  }
+  assert.ok(w > 185 && weeks >= 3 && weeks <= 6, `went up after ${weeks} sessions`);
+});

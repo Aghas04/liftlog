@@ -423,6 +423,25 @@ export function suggest(ex, history, opts) {
   let w = topWeight;
   let t = Math.round(repsAt(est, loadOf(w))) + 1;
 
+  // Weight goes up only when the sets are near the top together: every set
+  // within 2 reps of the best one. 185 x 12, 8, 6 is far less work than 12,
+  // 12, 12, so it stays at 185 and brings the later sets up first.
+  const best = Math.max(...lastSets.map(x => x.reps));
+  const behind = lastSets.length > 1 && lastSets.some(x => x.reps < best - 2);
+  if (t > zMax && behind) {
+    const add = shift <= -3 ? 0 : 1; // later in today's workout than last time: match, don't beat
+    const reps = Array.from({ length: n }, (_, i) => {
+      const was = lastSets[Math.min(i, lastSets.length - 1)].reps;
+      // Later sets never collapse to 1-2 reps (same floor as every suggestion).
+      const floor = Math.max(1, Math.min(lastSets[0].reps, zMin - 2));
+      return Math.max(floor, Math.min(zMax, i === 0 ? was : was + add));
+    });
+    // Reps falling 3+ a set on a big lift usually means short rests, not weak muscles.
+    const steep = ex.compound && !isBW && drop >= 3;
+    const out = build(w, reps[0], 'reps', `Same weight: bring the later sets up first (they fell to ${Math.min(...lastSets.map(x => x.reps))}). Weight goes up once every set is within 2 reps of your best.${steep ? ' Your reps drop a lot between sets: rest 2-3 minutes on this lift.' : ''}`, 1);
+    return { ...out, reps, ...(steep ? { restTip: true } : {}) };
+  }
+
   if (t > zMax && assisted && w >= 0) {
     return build(0, zMax, 'reps', 'No assistance needed anymore — time to try the bodyweight version.');
   }
