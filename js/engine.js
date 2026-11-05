@@ -477,7 +477,9 @@ export function suggest(ex, history, opts) {
       // easy to grow from. Stay heavier with slightly fewer reps instead.
       // Only when the heavier weight is still achievable, and the 12 reps were
       // done at a similar point in a workout (a fresh-day 12 doesn't count).
-      if (!isBW && t2 >= zMin - 2 && similarBest(w2 - inc) >= zMax) break;
+      // (Any recent session counts: right after moving up from 15 lateral raises at
+      // 20 lb to 25 lb, the 25 lb session alone would send you back to 20.)
+      if (!isBW && t2 >= zMin - 2 && Math.max(similarBest(w2 - inc), bestRepsAt(w2 - inc)) >= zMax) break;
       w2 -= inc;
       t2 = Math.round(repsAt(est, loadOf(w2))) + 1;
     }

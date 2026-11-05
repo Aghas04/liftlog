@@ -156,3 +156,20 @@ test('an unknown exercise id counts toward no muscle', async () => {
   const w = [{ date: ago(1), exercises: [{ exId: 'gone_123', sets: [{ weight: 100, reps: 10, done: true }] }] }];
   assert.deepEqual(muscleSets(w, look), {});
 });
+
+test('hitting every goal: weight never goes back down (no bouncing after a big jump), reps climb, then weight goes up', () => {
+  for (const [name, start, inc] of [['Lateral Raise', [20, [10, 9, 8]], 5], ['Dumbbell Curl', [25, [12, 12, 11]], 5], ['Bench Press', [185, [8, 7, 6]], 5], ['Leg Extension', [100, [12, 12, 12]], 10]]) {
+    const ex = EXERCISES.find(e => e.name === name);
+    const h = [{ date: ago(15 * 7), sets: start[1].map(reps => ({ weight: start[0], reps, done: true })) }];
+    let lastW = start[0];
+    let ups = 0;
+    for (let i = 14; i >= 1; i--) {
+      const s = suggest(ex, h, { increment: inc, now: NOW - i * 7 * DAY });
+      assert.ok(s.weight >= lastW, `${name} week ${15 - i}: ${lastW} -> ${s.weight}`);
+      if (s.weight > lastW) ups++;
+      lastW = s.weight;
+      h.push({ date: ago(i * 7), sets: s.reps.map(reps => ({ weight: s.weight, reps, done: true, target: { weight: s.weight, reps } })) });
+    }
+    assert.ok(ups >= 1, `${name}: the weight went up at least once in 14 weeks`);
+  }
+});
