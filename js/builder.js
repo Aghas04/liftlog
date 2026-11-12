@@ -25,7 +25,9 @@ export const MIN_SETS_PER_EXERCISE = 2;
 export const MAX_SETS_PER_EXERCISE = 4;
 // Helper muscles that bigger lifts already train indirectly (about half a set per set).
 const HELPS = { biceps: ['back'], triceps: ['chest', 'shoulders'], forearms: ['back', 'biceps'] };
-const INDIRECT_CREDIT = 0.35;
+// Same share the weekly plan expects bigger lifts to cover (about half a set
+// per set, Pelland 2024 fractional counting).
+const INDIRECT_CREDIT = 0.45;
 
 /** Seconds per working set from recent workouts, or rest + 40s of work. */
 export function paceFromHistory(workouts, defaultRest = 90) {

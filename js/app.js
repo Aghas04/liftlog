@@ -301,8 +301,9 @@ function resizeSets(entry, n) {
   const work = entry.sets.filter(s => !s.warmup).slice(0, n);
   while (work.length < n) {
     const prev = work.at(-1) || { weight: null, target: null };
-    const reps = entry.suggestion && prev.weight != null ? targetFor(entry.suggestion, ex, prev.weight, work.length, bodyweightOn()) : null;
-    work.push({ weight: prev.weight ?? null, reps: null, target: reps ? { weight: prev.weight, reps } : prev.target ? { ...prev.target } : null, done: false });
+    // An extra set (the plan has more sets than last time) follows the set before it.
+    const reps = prev.target?.reps ?? (entry.suggestion && prev.weight != null ? targetFor(entry.suggestion, ex, prev.weight, work.length, bodyweightOn()) : null);
+    work.push({ weight: prev.weight ?? null, reps: null, target: reps ? { weight: prev.weight, reps } : null, done: false });
   }
   entry.sets = [...warm, ...work];
 }
@@ -740,7 +741,8 @@ function exCard(w, ctx, ei, live) {
     } else if (sug) {
       // The workout-order adjustment stays out of sight mid-workout; it's one tap away.
       const target = sug.weights ? sug.weights.map((w, i) => `${weightLabel(ex, w)} × ${sug.reps[i]}`).join(' · ') : `${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}`;
-      sugHtml = `<div class="suggest"><div class="target">🎯 ${target}</div><div class="why">${esc(sug.reason)}</div>
+      const based = sug.basedOn ? `<div class="why">Goals based on ${relDays(sug.basedOn.date)}: ${esc(setsSummary(ex, sug.basedOn.sets))}${sug.basedOn.why === 'best' ? ' (your best recent session)' : ' (when this lift came at a similar point in the workout)'}.</div>` : '';
+      sugHtml = `<div class="suggest"><div class="target">🎯 ${target}</div><div class="why">${esc(sug.reason)}</div>${based}
         ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}
         ${sug.bigJump ? '<button class="link-btn" data-act="exMenu">Set a smaller weight step for this lift</button>' : ''}
         ${(isBW(ex) || isAssist(ex)) && !bodyweightOn() ? '<button class="link-btn" data-act="tab" data-tab="health">Log your bodyweight for smarter targets</button>' : ''}</div>

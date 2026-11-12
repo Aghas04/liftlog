@@ -927,5 +927,9 @@ label.btn { cursor: pointer; }
 a.btn { display: flex; align-items: center; justify-content: center; text-decoration: none; }
 
 /* Small text-style buttons under a suggestion; the version line in Settings. */
+/* The stall box: text on top, its three choices stacked under it. */
+.banner.stall { flex-direction: column; align-items: stretch; gap: 10px; }
+.banner.stall .banner-btns { flex-direction: column; align-items: stretch; gap: 8px; }
+.banner.stall .banner-btns button { text-align: left; padding: 8px 0; }
 .link-btn { display: block; margin-top: 6px; padding: 4px 0; background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px; font-weight: 700; text-align: left; cursor: pointer; }
 .version { text-align: center; margin-top: 14px; }

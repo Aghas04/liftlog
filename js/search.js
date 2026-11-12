@@ -80,7 +80,7 @@ const cache = new WeakMap();
 const words = ex => { let w = cache.get(ex); if (!w) { w = wordsOf(ex); cache.set(ex, w); } return w; };
 
 // "machine" on its own means any machine (pin, plate-loaded, Smith, assisted).
-const queryWords = q => tokenize(q.replace(/(w)ups?/gi, '$1 up')).map(w => (w === 'machine' || w === 'machines' ? 'machine_any' : canon(w)));
+const queryWords = q => tokenize(q.replace(/(\w)ups?\b/gi, '$1 up')).map(w => (w === 'machine' || w === 'machines' ? 'machine_any' : canon(w)));
 
 // A query word matches a whole word, or the start of one (typing "incl").
 const hit = (set, w) => set.has(w) || (w.length >= 3 && [...set].some(x => x.startsWith(w)));

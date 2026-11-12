@@ -16,6 +16,8 @@ const floorTo = (x, inc) => Math.floor(x / inc) * inc;
 // Weighted lifts never go past 12 reps: at that point the weight goes up.
 // Only bodyweight lifts (push-ups, pull-ups, dips, sit-ups) go higher.
 export const MAX_REPS = 12;
+// Reps lost per set with enough rest (2-3 min): about 1-2 (Willardson & Burkett 2005, 2006).
+export const MAX_DROP = 1.5;
 // Timed holds use seconds: 20-90 s, then a harder version.
 export const HOLD_ZONE = [20, 90];
 export function zoneFor(ex) {
@@ -228,15 +230,39 @@ export function suggest(ex, history, opts) {
   // Deload sessions are deliberately light; ignore them unless that's all there is.
   const valid = usable.some(s => !s.deload) ? usable.filter(s => !s.deload) : usable;
   const lastDate = usable[usable.length - 1].date;
-  // Compare like with like: if this lift was done recently at a similar point
-  // in a workout (similar fatigue), that session is the baseline. The fatigue
-  // model only has to bridge the gap when there's no similar session.
   const fNow = opts.fatigue || 0;
   const isSimilar = x => Math.abs((x.fatigue || 0) - fNow) <= 3;
-  const last = [...valid.slice(-4)].reverse().find(isSimilar) || valid[valid.length - 1];
   // Bodyweight lifts: each session uses your bodyweight from that day when known.
   const bwOf = s => s.bw || bw;
+  // Each session's strength as if done fresh (undoing how tired the muscle
+  // was from earlier lifts that day), so sessions at different points in a
+  // workout compare fairly.
+  const rate = learnFatigueRate(valid.slice(-12).map(s => ({
+    t: new Date(s.date).getTime() / DAY, e1rm: sessionE1RM(s, ex, bwOf(s)), f: s.fatigue,
+  })), opts.fatigueRate || DEFAULT_FATIGUE_RATE);
+  const fresh = s => sessionE1RM(s, ex, bwOf(s)) / fatigueFactor(s.fatigue, rate);
+  // The session to build on. Where a lift sits in the workout changes what you
+  // can do (earlier lifts tire it), so a recent session at a similar point is
+  // the best guide: within the last 4 sessions and 3 weeks, and still current. Otherwise your latest session. Then, if that was a clearly bad
+  // day (more than ~5% below your best of the last 2-3 sessions, about the size
+  // of normal day-to-day swings), the goal is to get back to that best session.
+  const latest0 = valid[valid.length - 1];
+  const twin = !isSimilar(latest0) ? [...valid.slice(-4)].reverse().find(isSimilar) : null;
+  // (If your latest session was done at least as tired and you still lifted
+  // more, that earlier session is out of date: compared on what you lifted.)
+  const outdated = twin && (latest0.fatigue || 0) >= (twin.fatigue || 0) && sessionE1RM(latest0, ex, bwOf(latest0)) > sessionE1RM(twin, ex, bwOf(twin));
+  const latest = twin && !outdated && new Date(latest0.date) - new Date(twin.date) <= 21 * DAY ? twin : latest0;
+  const recentPool = valid.slice(-3).filter(x => new Date(latest.date) - new Date(x.date) <= 42 * DAY);
+  const bestRecent = recentPool.reduce((a, b) => (fresh(b) > fresh(a) ? b : a), latest);
+  const heavierOrSame = (a, b) => Math.max(...workingSets(a).map(x => x.weight || 0)) >= Math.max(...workingSets(b).map(x => x.weight || 0));
+  // A bad day shows in what you actually lifted too, not only after the
+  // fatigue adjustment (which is an estimate).
+  const badDay = fresh(latest) < 0.95 * fresh(bestRecent) && sessionE1RM(latest, ex, bwOf(latest)) < sessionE1RM(bestRecent, ex, bwOf(bestRecent))
+    && heavierOrSame(bestRecent, latest);
+  const last = badDay ? bestRecent : latest;
   let lastSets = workingSets(last);
+  // Shown on the card when the goals come from a session other than your latest.
+  const basedOn = last !== latest0 ? { basedOn: { date: last.date, why: badDay ? 'best' : 'position', sets: workingSets(last).map(x => ({ weight: x.weight || 0, reps: x.reps, done: true })) } } : {};
   // A heavy one-off (a 1-3 rep test set) above the weight you used for most
   // sets isn't your working weight; leave it out of the set pattern.
   if (!(isBW || assisted)) {
@@ -255,6 +281,9 @@ export function suggest(ex, history, opts) {
   // Plan your usual number of sets, so one short day doesn't stick.
   const n = Math.min(8, Math.max(1, ...valid.slice(-3).map(s => (s === last ? lastSets.length : workingSets(s).length))));
   const drop = fatigueDrop(lastSets);
+  // Planned drop-off: at most 1.5 reps a set (12, 11, 9, 8), the same line the
+  // move-up rule uses, so a pattern you hit always counts as ready.
+  const plannedDrop = Math.min(MAX_DROP, drop);
   const loadOf = w => (bwLoad ? Math.max(0, bw + w) : w);
   // Assisted: a lighter session means more assistance, worked out on total load.
   const lighter = (frac, round) => (assisted ? Math.min(0, round(frac * (bw + topWeight) - bw, inc)) : Math.max(0, round(topWeight * frac, inc)));
@@ -265,17 +294,22 @@ export function suggest(ex, history, opts) {
   // Most reps done in one set at `weight` or heavier in recent sessions —
   // sessions at a similar point in a workout when there are any, since a
   // fresh-day 12 doesn't prove a tired day can handle the next weight.
+  // Most reps at `weight` or heavier in recent sessions, at a similar point in
+  // a workout when there are any (a fresh-day 12 doesn't prove a tired day can
+  // handle the next weight).
   const bestRepsAt = weight => {
     const recent = valid.slice(-6);
     const peers = recent.filter(isSimilar);
+    // No session at a similar point: only ones done at least as tired as today count.
+    const pool = peers.length ? peers : recent.filter(x => (x.fatigue || 0) >= fNow - 3);
     let best = 0;
-    for (const s of peers.length ? peers : recent) for (const x of workingSets(s)) if ((x.weight || 0) >= weight) best = Math.max(best, x.reps);
+    for (const s of pool) for (const x of workingSets(s)) if ((x.weight || 0) >= weight) best = Math.max(best, x.reps);
     return best;
   };
 
   // Most reps done at `weight` or heavier the last time this lift was done at
   // a similar point in a workout (similar fatigue), or 0 if none.
-  const similarSession = () => [...valid].reverse().find(isSimilar) || null;
+  const similarSession = () => last;
   // Most reps at `weight` or heavier in that similar session.
   const similarBest = weight => {
     const sim = similarSession();
@@ -286,7 +320,8 @@ export function suggest(ex, history, opts) {
   const similarShortfall = weight => {
     const sim = similarSession();
     if (!sim) return 0;
-    const short = workingSets(sim).filter(x => (x.weight || 0) >= weight && x.target && x.reps < x.target.reps);
+    // Only shortfalls at this same weight (falling short heavier says nothing about lighter).
+    const short = workingSets(sim).filter(x => Math.abs((x.weight || 0) - weight) < 1e-9 && x.target && x.reps < x.target.reps);
     return short.length ? Math.max(...short.map(x => x.reps)) : 0;
   };
 
@@ -298,12 +333,14 @@ export function suggest(ex, history, opts) {
     const seen = similarShortfall(weight);
     const room = similarSession()?.difficulty === 'easy' ? 2 : 1;
     if (seen > 0 && first > seen + room) first = seen + room;
-    // Later sets follow your usual drop-off, but never collapse to 1-2 reps.
-    const floor = Math.max(1, Math.min(first, zMin - 2));
+    // Later sets: at most 1.5 reps fewer per set and never below the growth range.
+    // With 2-3 min rests reps hold within a rep or two across sets; bigger
+    // drop-offs mostly mean short rests (Willardson & Burkett 2005, 2006).
+    const floor = Math.max(1, Math.min(first, zMin));
     const reps = [];
-    for (let i = 0; i < n; i++) reps.push(Math.max(floor, Math.round(first - drop * i)));
+    for (let i = 0; i < n; i++) reps.push(Math.max(floor, Math.round(first - plannedDrop * i)));
     // The fatigue explanation is kept separate so the app can show it only on request.
-    return { weight: assisted ? Math.min(0, weight) : Math.max(0, weight), reps, kind, reason, fatigueNote: note, est, drop, bonus, fatigue, zone };
+    return { weight: assisted ? Math.min(0, weight) : Math.max(0, weight), reps, kind, reason, fatigueNote: note, est, drop: plannedDrop, bonus, fatigue, zone, ...basedOn };
   };
 
   // Bodyweight lift with no bodyweight logged: total load is unknown, so
@@ -324,18 +361,16 @@ export function suggest(ex, history, opts) {
     return build(topWeight, best + 1, 'reps', `Beat last time by a rep (best was ${best}).`);
   }
 
-  // Convert each past session to a "fresh" strength by undoing how tired the
-  // muscle was when it was done, then apply today's fatigue at the end.
-  const rate = learnFatigueRate(valid.slice(-12).map(s => ({
-    t: new Date(s.date).getTime() / DAY, e1rm: sessionE1RM(s, ex, bwOf(s)), f: s.fatigue,
-  })), opts.fatigueRate || DEFAULT_FATIGUE_RATE);
-  const fresh = s => sessionE1RM(s, ex, bwOf(s)) / fatigueFactor(s.fatigue, rate);
-
   // Strength estimate. A better session counts in full; a worse one is
   // softened by the session before so one bad day doesn't overreact.
-  est = fresh(last);
-  // The session before the baseline, preferring one at a similar point too.
-  const before = valid.slice(0, valid.indexOf(last));
+  // Predicting today: a recent session (last 4) done at a similar point in a
+  // workout is the best evidence of what you manage at this point; the fatigue
+  // estimate only bridges the gap when there isn't one. (This predicts reps;
+  // the weight and set pattern come from your latest session.)
+  const simBase = last;
+  est = fresh(simBase);
+  // The session before it, preferring one at a similar point too.
+  const before = valid.slice(0, valid.indexOf(simBase));
   const prevSession = [...before].reverse().find(isSimilar) || before[before.length - 1];
   if (prevSession) {
     const prev = fresh(prevSession);
@@ -344,8 +379,7 @@ export function suggest(ex, history, opts) {
   // One weaker session can't pull the estimate far below what you showed
   // recently (at a similar point in the workout when there's history for it).
   const peers = valid.slice(-6).filter(isSimilar);
-  const pool = peers.length ? peers.slice(-2) : valid.slice(-3);
-  est = Math.max(est, 0.95 * Math.max(...pool.map(fresh)));
+  est = Math.max(est, 0.95 * Math.max(...(peers.length ? peers.slice(-2) : recentPool).map(fresh)));
   // And a looser floor from any recent session, so one disastrous day at
   // this position can't start a downward spiral.
   est = Math.max(est, 0.9 * Math.max(...valid.slice(-3).map(fresh)));
@@ -377,7 +411,7 @@ export function suggest(ex, history, opts) {
       } else r = s.reps + (shift <= -3 ? 0 : 1);
       weights.push(w); reps.push(r);
     }
-    return { weight: weights[0], weights, reps, kind, reason, fatigueNote: note, est, drop, bonus: 1, fatigue, zone };
+    return { weight: weights[0], weights, reps, kind, reason, fatigueNote: note, est, drop: plannedDrop, bonus: 1, fatigue, zone, ...basedOn };
   };
 
   const gapDays = (now - new Date(lastDate).getTime()) / DAY;
@@ -412,40 +446,62 @@ export function suggest(ex, history, opts) {
     return build(w, t, 'deload', 'Missed targets 2 sessions in a row — lighter weight to rebuild.');
   }
 
-  // Stalled: the last 3 sessions didn't beat the best of the ones before.
+  // Stalled: the last 3 sessions didn't beat the best of the ones before AND
+  // you're missing goals (2 of the last 3 sessions had a set short of its goal).
+  // Hitting your goals is progress, never a stall.
   const fr = valid.map(fresh);
-  const stalled = valid.length >= 5 && Math.max(...fr.slice(-3)) <= 1.005 * Math.max(...fr.slice(0, -3).slice(-6));
+  // Fell short of a goal, or logged without goals (then a flat session counts).
+  const short = x => { const g = workingSets(x).filter(y => y.target?.reps); return !g.length || g.some(y => y.reps < y.target.reps); };
+  const stalled = valid.length >= 5 && Math.max(...fr.slice(-3)) <= 1.005 * Math.max(...fr.slice(0, -3).slice(-6))
+    && valid.slice(-3).filter(short).length >= 2 && short(latest);
   if (shape) {
     const out = shaped(1, 'reps', 'Same set pattern as last time: one more rep per set, and a step up on sets that reached the top of the range.');
     return stalled ? { ...out, stalled: true } : out;
   }
 
   let w = topWeight;
-  let t = Math.round(repsAt(est, loadOf(w))) + 1;
-
-  // Weight goes up only when the sets are near the top together: every set
-  // within 2 reps of the best one. 185 x 12, 8, 6 is far less work than 12,
-  // 12, 12, so it stays at 185 and brings the later sets up first.
+  // Goals come from the reps you actually logged in the baseline session: one
+  // more on the first set (after a bad day: get back to the good session).
+  // Today's conditions adjust only the reps: later in the workout than last
+  // time (tired from earlier lifts) asks for fewer, as many as the fatigue
+  // estimate says; fresher, lighter bodyweight or an Easy rating, one more at
+  // most. They never move the weight by themselves.
+  const rB = lastSets[0].reps;
+  // Today's position in the workout: a recent session (last 4) done at a
+  // similar point and at this weight is real evidence of what you manage
+  // here; use it. Otherwise the fatigue estimate adjusts the goal.
+  const expect = repsAt(est, loadOf(w));
+  const nudge = Math.max(1 - rB - 1, Math.min(1, Math.round(expect - rB)));
+  const add = badDay ? 0 : Math.max(0, 1 + nudge);
+  let t = Math.max(1, badDay ? rB + Math.min(0, nudge) : rB + 1 + nudge);
+  // Weight moves up only when you reached the top of the range on your first
+  // set and your reps fell 1.5 a set or less on average (12, 11, 10, 9 yes;
+  // 12, 10, 8 or 12, 8, 6 not yet).
   const best = Math.max(...lastSets.map(x => x.reps));
-  const behind = lastSets.length > 1 && lastSets.some(x => x.reps < best - 2);
+  const behind = lastSets.length > 1 && (best - lastSets.at(-1).reps) / (lastSets.length - 1) > MAX_DROP + 1e-9;
+  const ready = rB >= zMax && !behind && !badDay;
+  // Not ready to move up: never past the top of the range (12).
+  if (!ready && !behind) t = Math.min(t, Math.max(zMax, rB));
+  if (ready && t <= zMax) t = zMax + 1;
+
+  // 185 x 12, 8, 6 is far less work than 12, 12, 12: stay at 185 and bring the
+  // later sets up first (one more rep each), the first set held at the top.
   if (t > zMax && behind) {
-    const add = shift <= -3 ? 0 : 1; // later in today's workout than last time: match, don't beat
+    const first = Math.min(zMax, rB);
     const reps = Array.from({ length: n }, (_, i) => {
       const was = lastSets[Math.min(i, lastSets.length - 1)].reps;
-      // Later sets never collapse to 1-2 reps (same floor as every suggestion).
-      const floor = Math.max(1, Math.min(lastSets[0].reps, zMin - 2));
-      return Math.max(floor, Math.min(zMax, i === 0 ? was : was + add));
+      return Math.max(Math.min(first, zMin), Math.min(first, i === 0 ? first : was + (add ? 1 : 0)));
     });
     // Reps falling 3+ a set on a big lift usually means short rests, not weak muscles.
     const steep = ex.compound && !isBW && drop >= 3;
-    const out = build(w, reps[0], 'reps', `Same weight: bring the later sets up first (they fell to ${Math.min(...lastSets.map(x => x.reps))}). Weight goes up once every set is within 2 reps of your best.${steep ? ' Your reps drop a lot between sets: rest 2-3 minutes on this lift.' : ''}`, 1);
+    const out = build(w, reps[0], 'reps', `Same weight: bring the later sets up first (they fell to ${Math.min(...lastSets.map(x => x.reps))} at ${fw(w)}). Weight goes up once your reps drop about 1-2 a set or less.${steep ? ' Your reps drop a lot between sets: rest 2-3 minutes on this lift.' : ''}`, 1);
     return { ...out, reps, ...(steep ? { restTip: true } : {}) };
   }
 
   if (t > zMax && assisted && w >= 0) {
     return build(0, zMax, 'reps', 'No assistance needed anymore — time to try the bodyweight version.');
   }
-  if (t > zMax) {
+  up: if (t > zMax) {
     // Move up in weight until reps fall back inside the zone, but never more
     // than ~10% in one session (at least one step). Assisted: never past zero.
     const maxW = assisted ? Math.min(0, w + inc) : Math.max(w + inc, floorTo(w * 1.1, inc));
@@ -468,6 +524,17 @@ export function suggest(ex, history, opts) {
       while (bestRepsAt(w2) >= zMax && (!assisted || w2 + inc <= 0)) w2 += inc;
       t2 = Math.round(repsAt(est, loadOf(w2)));
     }
+    // Earned the jump, but this lift is clearly later in today's workout than
+    // when you earned it and the new weight wouldn't reach the range: same
+    // weight today, move up next time.
+    if (!isBW && w2 !== w && shift <= -3 && t2 < zMin - 1) {
+      if (Math.round(expect) >= zMin) {
+        return build(w, Math.min(zMax, Math.round(expect)), 'hold', "Ready to move up, but this lift comes later in today's workout: same weight today, up next time.", 0);
+      }
+      // Too tired today even for this weight: the lighter-day rule below.
+      t = Math.round(expect);
+      break up;
+    }
     t2 = Math.min(zMax, t2);
     // Already done these reps at this weight recently? Ask for one more.
     const done = bestRepsAt(w2);
@@ -481,7 +548,8 @@ export function suggest(ex, history, opts) {
     // when sets are hard (Schoenfeld et al. 2017), and the jump lands better.
     const ext = zMax + 3;
     if (!isBW && !assisted && !ex.compound && w > 0 && (w2 - w) / w > 0.15 && bestRepsAt(w) < ext) {
-      const r = Math.min(ext, Math.max(t, bestRepsAt(w) + 1));
+      // One more than last time, fewer if you're more tired today.
+      const r = Math.min(ext, Math.max(zMin, rB + 1 + nudge));
       return { ...build(w, r, 'reps', `Next weight is a big jump (+${Math.round(((w2 - w) / w) * 100)}%) — add reps up to ${ext} first. A smaller step for this lift helps if your gym has one.`, 1), zone: [zMin, ext], bigJump: true };
     }
     if (!isBW) {
@@ -495,10 +563,13 @@ export function suggest(ex, history, opts) {
     return build(w, t, 'reps', `Next weight is a big jump for this lift — add reps first.`);
   }
 
+  // Today's prediction is well below the range (much more tired than usual):
+  // lighter so the sets stay in the growth range.
   if (t < zMin) {
     // Too heavy for the zone: come down until it fits.
     let w2 = w;
-    let t2 = t;
+    // A lighter day: aim at what the estimate says (no extra rep).
+    let t2 = Math.round(repsAt(est, loadOf(w)));
     while (t2 < zMin && (assisted ? w2 - inc > -bw : w2 - inc > 0)) {
       // Don't drop to a weight you've already done 12 reps with — that's too
       // easy to grow from. Stay heavier with slightly fewer reps instead.
@@ -508,20 +579,22 @@ export function suggest(ex, history, opts) {
       // 20 lb to 25 lb, the 25 lb session alone would send you back to 20.)
       if (!isBW && t2 >= zMin - 2 && Math.max(similarBest(w2 - inc), bestRepsAt(w2 - inc)) >= zMax) break;
       w2 -= inc;
-      t2 = Math.round(repsAt(est, loadOf(w2))) + 1;
+      t2 = Math.round(repsAt(est, loadOf(w2)));
     }
     if (w2 !== w) {
       // Still one rep beyond the estimate, so lighter days keep progressing too.
-      return build(w2, Math.min(zMax, Math.max(zMin, t2)), 'down', `Below ${zMin} reps — lighter so you can work in the growth range.`, 1);
+      return build(w2, Math.min(zMax, Math.max(zMin, t2)), 'down', `Below ${zMin} reps — lighter so you can work in the growth range.`, 0);
     }
   }
 
   const missedLast = sessionMissed(last);
   // When the target sits below last time's reps (it comes later in today's
   // workout), don't claim it's "one more than last time".
-  const reason = missedLast
-    ? 'Missed some targets — same weight, adjusted reps.'
-    : shift <= -3 ? 'Same weight — go for every rep.' : 'Same weight, beat last time by a rep.';
+  const reason = badDay
+    ? 'Last time was lighter or an off day: back to your best recent session.'
+    : missedLast
+      ? 'Missed some targets — same weight, adjusted reps.'
+      : shift <= -3 ? 'Same weight — go for every rep.' : 'Same weight, beat last time by a rep.';
   const out = build(w, t, missedLast ? 'hold' : 'reps', reason, 1);
   return stalled ? { ...out, stalled: true } : out;
 }

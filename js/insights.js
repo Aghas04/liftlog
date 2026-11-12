@@ -89,8 +89,12 @@ export function stalledLifts(workouts, lookup, bwOn, now = Date.now()) {
     const ex = lookup(id);
     const e = sessions.slice(-3).map(s => sessionE1RM(s, ex, bwOn(s.date)));
     const flat = Math.max(e[1], e[2]) <= e[0] * 1.005;
+    // Same rule as the exercise card: flat AND falling short of goals. Hitting
+    // your goals is progress, even when the estimate is flat (lighter or later days).
+    // Fell short of a goal, or logged without goals (then a flat session counts).
+    const short = x => { const g = workingSets(x).filter(y => y.target?.reps); return !g.length || g.some(y => y.reps < y.target.reps); };
     const missing = sessionMissed(sessions.at(-1)) && sessionMissed(sessions.at(-2));
-    if (flat || missing) stalled.push(id);
+    if ((flat && short(sessions.at(-1)) && short(sessions.at(-2))) || missing) stalled.push(id);
   }
   return { tracked, stalled };
 }

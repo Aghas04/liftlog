@@ -45,8 +45,12 @@ test('longer breaks come back lighter', () => {
 });
 
 test('a stalled lift is flagged; a progressing one is not', () => {
-  const flat = [S(42, [[200, 6]]), S(35, [[200, 7]]), S(28, [[200, 8]]), S(21, [[200, 8]]), S(14, [[200, 8]]), S(7, [[200, 8]])];
+  // Flat and missing goals: stalled.
+  const flat = [S(42, [[200, 6]]), S(35, [[200, 7]]), S(28, [[200, 8]]), S(21, [[200, 8, 9]]), S(14, [[200, 8, 9]]), S(7, [[200, 8, 9]])];
   assert.equal(sug(flat).stalled, true);
+  // Flat but hitting every goal (the goals were the same): not a stall.
+  const hitting = [S(42, [[200, 6]]), S(35, [[200, 7]]), S(28, [[200, 8]]), S(21, [[200, 8, 8]]), S(14, [[200, 8, 8]]), S(7, [[200, 8, 8]])];
+  assert.ok(!sug(hitting).stalled, 'hitting your goals is never a stall');
   const up = [S(42, [[200, 6]]), S(35, [[200, 7]]), S(28, [[200, 8]]), S(21, [[200, 9]]), S(14, [[200, 10]]), S(7, [[200, 11]])];
   assert.ok(!sug(up).stalled);
   assert.ok(!sug(flat.slice(-3)).stalled, 'needs enough history');
