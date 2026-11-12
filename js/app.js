@@ -9,14 +9,15 @@ import { howTo, videoUrl, SYMPTOMS, PAIN_SYMPTOMS } from './howto.js';
 import { buildWorkout, paceFromHistory, setsForMinutes, exerciseForRegion, hasPaceHistory } from './builder.js';
 import {
   state, save, replaceState, uid, allExercises, exercise, increment, restFor, bodyweightOn, usageCounts, exSetting, setExSetting,
-  dayType, visibleSplits, saveSoon, flushSave, loadProblem, onOutsideChange,
+  dayType, visibleSplits, saveSoon, flushSave, loadProblem, onOutsideChange, setLearnedRests, learnedRest,
 } from './store.js';
+import { learnRests } from './rest.js';
 import { APP_VERSION } from './version.js';
 import {
   suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
   personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor, deloadSuggestion, deloadSetCount, retargetFrom, workWeightOf,
 } from './engine.js';
-import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter, weeklyTargets, goalSizing } from './planner.js';
+import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter, weeklyTargets, goalSizing, modelSeconds } from './planner.js';
 import {
   createPlan, blockedLifts, maintainPlan, currentWeek, upcomingDays, weekVolume, todayOf, nextTraining, pausePlan, resumePlan, setWeekDays, editSession,
   unexclude, dropFromBlock, sessionEntries, runReview, approveReview, postponeReview, reviewDue, isPaused, blockWeek,
@@ -24,7 +25,7 @@ import {
 } from './plancontrol.js';
 import {
   recommendSplit, deloadAdvice, achievements, monthRecap, strengthLevels, muscleSets,
-  regionSets, regionTargets, regionLastDirect, neglectedRegions, DIRECT, weekKey as planWeekKey,
+  regionSets, regionTargets, regionLastDirect, neglectedRegions, DIRECT, weekKey as planWeekKey, phaseHint,
 } from './insights.js';
 import { listPhotos, photoBlob, addPhoto, deletePhoto, putPhoto } from './photos.js';
 import { workoutCard, shareOrDownload } from './share.js';
@@ -344,7 +345,7 @@ function suggestionFor(ex, fatigue = 0, zone = null) {
   const inc = increment(ex);
   let sug = suggest(ex, historyFor(ex.id), {
     increment: inc, bodyweight: bodyweightOn(), fatigue, fatigueRate: personalRate().rate,
-    formatWeight: v => `${fmtW(v)} ${wu()}`, ...(zone ? { zone } : {}),
+    formatWeight: v => `${fmtW(v)} ${wu()}`, ...(zone ? { zone } : {}), phase: state.settings.dietPhase || 'maintain',
   });
   // After switching to kg, old lb weights (135 lb = 61.23 kg) aren't real kg
   // loads; snap those onto the step grid. Weights already typed in kg stay as is.
@@ -742,7 +743,7 @@ function exCard(w, ctx, ei, live) {
       // The workout-order adjustment stays out of sight mid-workout; it's one tap away.
       const target = sug.weights ? sug.weights.map((w, i) => `${weightLabel(ex, w)} × ${sug.reps[i]}`).join(' · ') : `${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}`;
       const based = sug.basedOn ? `<div class="why">Goals based on ${relDays(sug.basedOn.date)}: ${esc(setsSummary(ex, sug.basedOn.sets))}${sug.basedOn.why === 'best' ? ' (your best recent session)' : ' (when this lift came at a similar point in the workout)'}.</div>` : '';
-      sugHtml = `<div class="suggest"><div class="target">🎯 ${target}</div><div class="why">${esc(sug.reason)}</div>${based}
+      sugHtml = `<div class="suggest"><div class="target">🎯 ${target}</div><div class="why">${esc(sug.reason)}</div>${based}${restNoteHtml(e)}
         ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}
         ${sug.bigJump ? '<button class="link-btn" data-act="exMenu">Set a smaller weight step for this lift</button>' : ''}
         ${(isBW(ex) || isAssist(ex)) && !bodyweightOn() ? '<button class="link-btn" data-act="tab" data-tab="health">Log your bodyweight for smarter targets</button>' : ''}</div>
@@ -917,6 +918,7 @@ function viewWorkout() {
   </div>
   ${!isStandalone() && isPhone() ? `<button class="banner install-banner" data-act="installSheet"><div>📲 <b>Add to Home Screen</b> so your data is kept safe.</div><span>How?</span></button>` : ''}
   ${needsBackup ? `<div class="banner"><div>It's been a while since your last backup.</div><button data-act="export">Back up</button></div>` : ''}
+  ${phaseBannerHtml()}
   ${deloadBanner()}
   ${reviewCardHtml()}
   ${planWk ? todayPlanHtml(planWk) : pickHtml}
@@ -1436,6 +1438,7 @@ function render(animate = false) {
   const views = { workout: viewWorkout, plan: viewPlan, history: viewHistory, progress: viewProgress, health: viewHealth };
   const view = $('#view');
   rateCache = null; // history edits can change what's been learned
+  learnedRests();
   keepPlanCurrent();
   view.innerHTML = views[ui.tab]();
   if (animate) {
@@ -1471,6 +1474,29 @@ const GOAL_INFO = {
 const blocked = () => blockedLifts(state.settings, state.plan);
 const usable = () => { const b = new Set(blocked()); return allExercises().filter(e => !b.has(e.id)); };
 const pace = () => paceFromHistory(state.workouts, state.settings.defaultRest);
+// Rest learned per lift from your set times (rest.js), recomputed when history changes.
+let restCache = { key: null, map: {} };
+function learnedRests() {
+  const ws = state.workouts, last = ws.at(-1);
+  const key = `${ws.length}:${last?.id}:${last?.finishedAt}:${ws.reduce((n, w) => n + w.exercises.length, 0)}`;
+  if (restCache.key !== key) { restCache = { key, map: learnRests(ws, exercise) }; setLearnedRests(restCache.map); }
+  return restCache.map;
+}
+const restSecsMap = () => Object.fromEntries(Object.entries(learnedRests()).map(([id, r]) => [id, r.rest]));
+// How your real workout times compare with the per-lift timing (set length from
+// reps, learned or rule rests, warm-ups, changes): the median over your last 6
+// finished workouts, kept within 0.75-1.5. null until there's one to measure.
+function timeScale() {
+  const rests = restSecsMap();
+  const r = state.workouts.filter(w => w.finishedAt).slice(-6).map(w => {
+    const n = w.exercises.reduce((s, e) => s + workingSets(e).length, 0);
+    const model = modelSeconds(w, exercise, { rests, restSec: state.settings.defaultRest });
+    const real = (new Date(w.finishedAt) - new Date(w.date)) / 1000;
+    return n >= 6 && model > 0 && real > 0 ? real / model : null;
+  }).filter(x => x && x > 0.4 && x < 3).sort((a, b) => a - b);
+  return r.length ? Math.min(1.5, Math.max(0.75, r[Math.floor(r.length / 2)])) : null;
+}
+const clock = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 // What plans and suggestions may pick: common versions plus anything you've used or starred.
 const pool = () => planPool(usable(), { usage: usageCounts(), stars: stars() });
 // Equipment setups for "Build today's workout". Weekly plans always use the full gym.
@@ -1503,7 +1529,7 @@ const planCtx = () => {
   const nextMon = planWeekKey(Date.now()) + 7 * DAY + 12 * 3600000;
   // A deload that touched last week: its low volume isn't a shortfall to make up.
   const lastMon = planWeekKey(Date.now()) - 7 * DAY;
-  return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, deload: inDeload(), perLift: !hasPaceHistory(state.workouts), deloadNext: until > nextMon, deloadPrev: until > lastMon && until - 7 * DAY < planWeekKey(Date.now()) };
+  return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, deload: inDeload(), perLift: true, rests: restSecsMap(), timeScale: timeScale(), deloadNext: until > nextMon, deloadPrev: until > lastMon && until - 7 * DAY < planWeekKey(Date.now()) };
 };
 const todayIdx = () => (new Date().getDay() + 6) % 7;
 
@@ -1703,6 +1729,28 @@ function staleHtml(w) {
   if (Date.now() - last < 3 * 3600000 || !w.exercises.some(e => e.sets.some(s => s.done))) return '';
   return `<div class="banner info"><div>Still training? Nothing logged since ${new Date(last).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.</div>
     <div class="banner-btns"><button data-act="finishStale">Finish as of then</button></div></div>`;
+}
+
+// Learned rest for this lift, before its first set (your own rest setting wins).
+function restNoteHtml(e) {
+  const lr = learnedRest(e.exId);
+  if (!lr || state.exerciseSettings[e.exId]?.rest != null || e.sets.some(s => s.done)) return '';
+  const from = lr.source === 'lift' ? 'your sets on this lift' : `your sets on all your ${exercise(e.exId).compound ? 'big' : 'smaller'} lifts`;
+  const tip = lr.usualRest < lr.rest - 30 && lr.usualDrop >= 3
+    ? ` You usually rest about ${clock(lr.usualRest)} and lose ~${lr.usualDrop} reps a set; the full rest should keep more reps.` : '';
+  return `<div class="why">⏱ Rest ${clock(restFor(e.exId))}: learned from ${from}, the shortest rest that keeps reps within about 1.5 a set.${tip}</div>`;
+}
+
+// Your bodyweight trend points to a different diet phase than the one picked.
+const PHASE_NAME = { bulk: 'Bulking', maintain: 'Maintaining', cut: 'Cutting' };
+function phaseBannerHtml() {
+  const snooze = state.settings.phaseHintSnooze;
+  if (snooze && Date.now() < new Date(snooze).getTime()) return '';
+  const h = phaseHint(state.bodyweight, state.settings.dietPhase || 'maintain');
+  if (!h) return '';
+  const dir = h.ratePerWeek > 0 ? `going up about ${h.ratePerWeek}%` : h.ratePerWeek < 0 ? `going down about ${-h.ratePerWeek}%` : 'steady';
+  return `<div class="banner info"><div>Your bodyweight is ${dir} a week. Switch your diet phase to <b>${PHASE_NAME[h.suggest]}</b>?</div>
+    <div class="banner-btns"><button data-act="setPhase" data-v="${h.suggest}">Switch</button><button class="muted" data-act="phaseHintLater">Not now</button></div></div>`;
 }
 
 // Template workouts that keep skipping regions get swap offers (today only).
@@ -2796,6 +2844,8 @@ function sheetHtml() {
       const away = state.settings.notAtGym || [];
       const gymCount = stars().length + away.length + pains.length + state.customExercises.length;
       const workout = `
+        <div class="field"><span>Diet phase</span>${chips([['bulk', 'Bulking'], ['maintain', 'Maintaining'], ['cut', 'Cutting']], 'setPhase', null, k => (state.settings.dietPhase || 'maintain') === k)}
+          <small class="muted">${{ bulk: 'Eating in a surplus: normal progression.', maintain: 'Eating at maintenance: normal progression.', cut: 'Eating in a deficit: muscle gain is limited, strength mostly holds, so keeping your weights counts as success and the plan doesn\'t add volume.' }[state.settings.dietPhase || 'maintain']}</small></div>
         <div class="field"><span>Units</span>${chips([['lb', 'Pounds (lb)'], ['kg', 'Kilograms (kg)']], 'setUnits', null, k => U() === k)}</div>
         <div class="field"><span>Rest timer for isolation lifts. Big compound lifts get at least 2 min, strength sets (3–6 reps) 3 min. Set any lift your own way in its ••• menu</span>
           ${chips([60, 90, 120, 180].map(v => [v, `${v}s`]), 'defaultRest', null, k => state.settings.defaultRest === k)}</div>
@@ -3687,7 +3737,7 @@ const actions = {
 
   // Block review
   reviewSheet() {
-    ui.review = runReview(state.plan, { workouts: state.workouts, lookup: exercise, bwOn: bodyweightOn, exercises: pool().exercises, usage: pool().usage, blocked: blocked(), secPerSet: pace() });
+    ui.review = runReview(state.plan, { workouts: state.workouts, lookup: exercise, bwOn: bodyweightOn, exercises: pool().exercises, usage: pool().usage, blocked: blocked(), secPerSet: pace(), phase: state.settings.dietPhase || 'maintain' });
     ui.reviewAcc = { volume: {}, swaps: [] };
     openSheet({ type: 'review' });
   },
@@ -4091,6 +4141,8 @@ const actions = {
 
   finishSheet() { openSheet({ type: 'finish' }); },
   finish() { finishWorkout(); },
+  setPhase(el) { state.settings.dietPhase = el.dataset.v; state.settings.phaseSince = new Date().toISOString(); state.settings.phaseHintSnooze = null; save(); toast(`Diet phase: ${PHASE_NAME[el.dataset.v]}`); if (ui.sheet) renderSheet(); render(); },
+  phaseHintLater() { state.settings.phaseHintSnooze = new Date(Date.now() + 14 * DAY).toISOString(); save(); render(); },
   finishStale() { finishWorkout(new Date(lastActive(state.activeWorkout)).toISOString()); },
   // Sets with reps typed in but not ticked: tick them, then save.
   finishTyped() {

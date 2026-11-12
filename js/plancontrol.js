@@ -154,7 +154,7 @@ export function maintainPlan(plan, workouts, now = Date.now(), lookup = null) {
 // adapts so every part the plan trains still gets trained this week.
 export function currentWeek(plan, workouts, lookup, now = Date.now(), secPerSet = 130, ctx = null) {
   const own = ownWorkouts(plan, workouts);
-  const week = planWeek({ profile: plan.profile, plan, workouts: own, lookup, now, secPerSet, deload: !!ctx?.deload, prevDeload: !!ctx?.deloadPrev, perLift: !!ctx?.perLift });
+  const week = planWeek({ profile: plan.profile, plan, workouts: own, lookup, now, secPerSet, deload: !!ctx?.deload, prevDeload: !!ctx?.deloadPrev, perLift: !!ctx?.perLift, rests: ctx?.rests || {}, timeScale: ctx?.timeScale ?? null });
   return ctx ? coverWeek(week, plan, own, ctx) : week;
 }
 
@@ -233,7 +233,7 @@ export function upcomingDays(plan, workouts, lookup, now = Date.now(), secPerSet
     id: `assumed-${d.session.seq}`, date: new Date(d.date + 'T12:00:00').toISOString(), plan: { id: plan.id, seq: d.session.seq }, exercises: [],
   }));
   // Projection: no shortfall carry-over (this week isn't finished yet).
-  const raw = planWeek({ profile: plan.profile, plan, workouts: [...own, ...assumed], lookup, now: next.getTime(), secPerSet, deload: !!ctx?.deloadNext, carry: false, perLift: !!ctx?.perLift });
+  const raw = planWeek({ profile: plan.profile, plan, workouts: [...own, ...assumed], lookup, now: next.getTime(), secPerSet, deload: !!ctx?.deloadNext, carry: false, perLift: !!ctx?.perLift, rests: ctx?.rests || {}, timeScale: ctx?.timeScale ?? null });
   const nextWeek = ctx ? coverWeek(raw, plan, [], ctx) : raw;
   const todayIndex = (new Date(now).getDay() + 6) % 7;
   const days = [...thisWeek.days.map(d => ({ ...d, week: 0 })), ...nextWeek.days.slice(0, todayIndex).map(d => ({ ...d, week: 1 }))];
@@ -562,8 +562,8 @@ export function sessionEntries(session) {
 }
 
 /** Run the block review with the plan's own settings. */
-export function runReview(plan, { workouts, lookup, bwOn, exercises, usage, blocked, secPerSet }) {
-  return reviewBlock({ profile: plan.profile, plan, workouts: ownWorkouts(plan, workouts), lookup, bwOn, exercises, usage, blocked, secPerSet });
+export function runReview(plan, { workouts, lookup, bwOn, exercises, usage, blocked, secPerSet, phase }) {
+  return reviewBlock({ profile: plan.profile, plan, workouts: ownWorkouts(plan, workouts), lookup, bwOn, exercises, usage, blocked, secPerSet, phase });
 }
 
 /**

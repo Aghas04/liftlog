@@ -16,6 +16,7 @@ import { MUSCLES, REGIONS, regionsOf, exerciseRegions, primaryRegion, allowedBy 
 import { workingSets, sessionE1RM, sessionMissed, DELOAD_SETS, restSeconds } from './engine.js';
 import { neglectedRegions, DIRECT, weekKey } from './insights.js';
 import { worthBoth } from './equipment.js';
+import { setSeconds } from './rest.js';
 
 const DAY = 86400000;
 export const PER_SESSION_CAP = 10;
@@ -427,12 +428,33 @@ export function indirectCredit(ex) {
 }
 
 /**
+ * How long a logged workout "should" take under the per-lift timing (its sets,
+ * learned or rule rests, set time from its reps, warm-ups, changes). Compared
+ * with real durations, this gives your personal time scale.
+ */
+export function modelSeconds(workout, lookup, { rests = {}, restSec = 90 } = {}) {
+  let t = 0, bigLifts = 0;
+  for (const e of workout.exercises) {
+    const ex = lookup(e.exId);
+    const sets = workingSets(e);
+    if (!sets.length || !ex || ex.unknown) continue;
+    const rest = rests[e.exId] ?? restSeconds(ex, { base: restSec });
+    for (const s of sets) t += setSeconds(s.reps) * (ex.unilateral ? 2 : 1) + (e.group ? 0 : rest);
+    t += 45;
+    if (ex.compound && bigLifts < 2) { t += 150; bigLifts++; }
+  }
+  return t;
+}
+
+/**
  * Build one session: sets per muscle -> exercises with sets, ordered, with
  * main lifts flagged and supersets/trims applied to fit the time limit.
  */
 // perLift: no measured pace yet, so time each lift by its own rest (2-3 min on
 // big lifts) plus warm-ups, instead of one average per set.
-export function buildSession({ type, variant, setsByMuscle, lookup, profile, secPerSet = 130, restSec = 90, perLift = false }) {
+// rests: learned rest per lift (rest.js); timeScale: how your real workouts
+// compare with this per-lift timing (1 = exactly), so estimates match you.
+export function buildSession({ type, variant, setsByMuscle, lookup, profile, secPerSet = 130, restSec = 90, perLift = false, rests = {}, timeScale = 1 }) {
   const day = PLAN_DAYS[type];
   const items = [];
   const notes = [];
@@ -455,31 +477,36 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
   }
   // Fit the time limit: superset unrelated isolation lifts, then trim.
   const limit = (profile.minutes || 60) * 60;
-  // Work per set, ramp-up sets before the first big lifts, moving to the next exercise.
-  const WORK_SEC = 40, WARMUP_SEC = 150, CHANGE_SEC = 45;
-  // One-arm and single-leg lifts do the work twice per set.
-  const work = it => WORK_SEC * (lookup(it.exId).unilateral ? 2 : 1);
+  // Ramp-up sets before the first big lifts; moving to the next exercise.
+  const WARMUP_SEC = 150, CHANGE_SEC = 45;
+  // A set's own time from its typical reps (about 3 s a rep plus getting set);
+  // one-arm and single-leg lifts do the work twice.
+  const work = it => setSeconds(it.main ? 5 : it.compound ? 9 : 11) * (lookup(it.exId).unilateral ? 2 : 1);
+  // Rest: what you've been learned to need on this lift, else the rest rules.
+  const restOf = it => rests[it.exId] ?? restSeconds(lookup(it.exId), { base: restSec, zone: it.main ? [3, 6] : null });
   const perSet = it => {
-    const usual = perLift ? work(it) + restSeconds(lookup(it.exId), { base: restSec, zone: it.main ? [3, 6] : null }) : secPerSet;
-    return it.rest != null ? Math.min(usual, work(it) + it.rest) : usual;
+    const usual = perLift ? (work(it) + restOf(it)) * timeScale : secPerSet;
+    return it.rest != null ? Math.min(usual, (work(it) + it.rest) * timeScale) : usual;
   };
   const timeOf = () => {
     // Warm-ups: ramp-up sets before the first two big lifts; later lifts start warm.
     const warm = items.filter(it => it.core && it.compound).slice(0, 2);
-    let t = items.reduce((s, it) => s + it.sets * perSet(it) + (perLift && warm.includes(it) ? WARMUP_SEC : 0) + (perLift ? CHANGE_SEC : 0), 0);
+    let t = items.reduce((s, it) => s + it.sets * perSet(it) + (perLift ? ((warm.includes(it) ? WARMUP_SEC : 0) + CHANGE_SEC) * timeScale : 0), 0);
     const seen = new Set();
     for (const it of items) if (it.superset && !seen.has(it.superset)) {
       seen.add(it.superset);
       const pair = items.filter(x => x.superset === it.superset);
       if (pair.length < 2) continue; // its partner was dropped: no time saved
-      t -= Math.min(...pair.map(x => x.sets)) * Math.min(restSec, ...pair.map(x => x.rest ?? restSec));
+      t -= Math.min(...pair.map(x => x.sets)) * Math.min(restSec, ...pair.map(x => x.rest ?? restSec)) * (perLift ? timeScale : 1);
     }
     return t;
   };
   // Short on time: isolation lifts rest 90 s first (big lifts keep their rest).
   if (timeOf() > limit) {
     let cut = 0;
-    for (const it of items) if (!it.main && !lookup(it.exId).compound && restSec > ISO_REST) { it.rest = ISO_REST; cut++; }
+    // (Not on a lift where you've been learned to need longer to keep your reps:
+    // there, fewer full-quality sets beat more shortened ones.)
+    for (const it of items) if (!it.main && !lookup(it.exId).compound && restOf(it) > ISO_REST && !(rests[it.exId] > ISO_REST)) { it.rest = ISO_REST; cut++; }
     if (cut) notes.push(`Isolation lifts rest ${ISO_REST} s to fit your time`);
   }
   if (timeOf() > limit) {
@@ -551,7 +578,7 @@ function sessionOrder(items, priority) {
  */
 export function planWeek(input) {
   // deload: this is a deload week (fewer sets). carry: false turns off carrying last week's shortfall.
-  const { profile, plan, workouts = [], lookup, now = Date.now(), secPerSet = 130, deload = false, carry = true, perLift = false } = input;
+  const { profile, plan, workouts = [], lookup, now = Date.now(), secPerSet = 130, deload = false, carry = true, perLift = false, rests = {}, timeScale = null } = input;
   const split = splitById(plan.splitId);
   const ws = weekKey(now);
   const wk = String(ws);
@@ -640,7 +667,8 @@ export function planWeek(input) {
   // Volume: weekly targets minus what's already done this week, spread over
   // the remaining sessions (never above the per-session cap).
   // Without a measured pace, sets take longer (2-3 min rests on big lifts, warm-ups).
-  let targets = weeklyTargets(profile, plan.volume, perLift ? Math.round(secPerSet * 1.2) : secPerSet);
+  // (No measured pace yet: sets take longer than a default guess, so size for that.)
+  let targets = weeklyTargets(profile, plan.volume, perLift && !timeScale ? Math.round(secPerSet * 1.2) : secPerSet);
   const easing = plan.easeWeek && String(plan.easeWeek) === wk;
   const ease = (easing ? 0.7 : 1) * (deload ? DELOAD_SETS : 1);
   // A goal can't be more than this split's sessions can hold (10 sets per
@@ -781,7 +809,7 @@ export function planWeek(input) {
 
   // Build each session.
   const restSec = Math.max(60, secPerSet - 40);
-  const built = sessions.map((s, i) => buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec, perLift }));
+  const built = sessions.map((s, i) => buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec, perLift, rests, timeScale: timeScale || 1 }));
 
   // Make the week add up. Count what's done plus what's planned exactly the way
   // the weekly card does (each lift's own indirect work), then trim or add
@@ -800,7 +828,7 @@ export function planWeek(input) {
   const totals = () => { const t = { ...doneCredit }; for (const b of built) for (const it of b.items) credit(t, it.exId, it.sets); return t; };
   const setsIn = (b, m) => b.items.filter(it => it.muscle === m).reduce((a, it) => a + it.sets, 0);
   const directOf = m => (directDone[m] || 0) + built.reduce((s, b) => s + setsIn(b, m), 0);
-  const setMin = it => Math.min(perLift ? 40 + restSeconds(lookup(it.exId), { base: restSec }) : secPerSet, it.rest != null ? 40 + it.rest : Infinity) / 60;
+  const setMin = it => Math.min(perLift ? (setSeconds(it.compound ? 9 : 11) + (rests[it.exId] ?? restSeconds(lookup(it.exId), { base: restSec }))) * (timeScale || 1) : secPerSet, it.rest != null ? (setSeconds(11) + it.rest) * (timeScale || 1) : Infinity) / 60;
   const limitMin = profile.minutes || 60;
   // Two passes: changing one muscle's sets changes the half credit others get
   // (dips give chest credit after chest was balanced).
@@ -902,7 +930,7 @@ export function planWeek(input) {
  * stalled lifts and accessory rotation.
  */
 export function reviewBlock(input) {
-  const { profile, plan, workouts, lookup, bwOn = () => 0, exercises, usage = {}, blocked = [], secPerSet = 130 } = input;
+  const { profile, plan, workouts, lookup, bwOn = () => 0, exercises, usage = {}, blocked = [], secPerSet = 130, phase = 'maintain' } = input;
   const start = plan.blockStart;
   const block = workouts.filter(w => w.date >= start);
   const targets = weeklyTargets(profile, plan.volume, secPerSet);
@@ -935,6 +963,9 @@ export function reviewBlock(input) {
     if (prog < 0 || missRate >= 0.4 || poorRate >= 0.5) {
       to = Math.max(lo, from - 2);
       reason = prog < 0 ? `Strength dipped ${(prog * 100).toFixed(1)}% — easing volume to recover` : 'Missing targets or recovering poorly — easing volume';
+    } else if (prog < 0.01 && missRate < 0.25 && poorRate < 0.3 && phase === 'cut') {
+      // On a cut, holding strength is the goal and recovery is limited: no added volume.
+      reason = 'Holding strength on a cut — keeping volume';
     } else if (prog < 0.01 && missRate < 0.25 && poorRate < 0.3) {
       to = Math.min(hi, from + 2);
       reason = 'Stalled but recovering well — a little more volume';

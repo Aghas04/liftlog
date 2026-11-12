@@ -70,6 +70,27 @@ export function recommendSplit(workouts, lookup, dayTypes, now = Date.now()) {
   return { day: best.day, reason };
 }
 
+/**
+ * Diet phase your bodyweight trend points to, when it differs from the one you
+ * picked: { suggest: 'bulk' | 'cut' | 'maintain', ratePerWeek } or null.
+ * Needs 4+ weigh-ins over at least 3 weeks (last 6 weeks). Gaining or losing
+ * 0.25%+ of bodyweight a week is a clear trend; within 0.15% is maintaining.
+ * (Cuts aimed at keeping muscle usually lose 0.5-1% a week: Helms et al. 2014.)
+ */
+export function phaseHint(bodyweight, phase = 'maintain', now = Date.now()) {
+  const since = now - 42 * DAY;
+  const pts = (bodyweight || []).map(b => ({ t: new Date(b.date + 'T12:00:00').getTime(), lb: b.lb })).filter(p => p.t >= since && p.lb > 0).sort((a, b) => a.t - b.t);
+  if (pts.length < 4 || pts.at(-1).t - pts[0].t < 21 * DAY) return null;
+  const n = pts.length;
+  const mt = pts.reduce((s, p) => s + p.t, 0) / n, ml = pts.reduce((s, p) => s + p.lb, 0) / n;
+  let num = 0, den = 0;
+  for (const p of pts) { num += (p.t - mt) * (p.lb - ml); den += (p.t - mt) ** 2; }
+  const ratePerWeek = den ? ((num / den) * 7 * DAY) / ml * 100 : 0;
+  const trend = ratePerWeek >= 0.25 ? 'bulk' : ratePerWeek <= -0.25 ? 'cut' : Math.abs(ratePerWeek) <= 0.15 ? 'maintain' : null;
+  if (!trend || trend === phase) return null;
+  return { suggest: trend, ratePerWeek: Math.round(ratePerWeek * 100) / 100 };
+}
+
 /** Exercise ids whose recent sessions have stalled or missed targets. */
 export function stalledLifts(workouts, lookup, bwOn, now = Date.now()) {
   const since = new Date(now - 42 * DAY).toISOString();

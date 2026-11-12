@@ -406,3 +406,14 @@ test('a deload week plans about 40% fewer sets, still valid sessions', () => {
   assert.ok(deload.notes.some(n => /Deload week/.test(n)));
   checkWeek(deload, profile, 'deload');
 });
+
+test('review on a cut: holding strength keeps volume instead of adding sets', () => {
+  const profile = { ...base, days: [0, 2, 4] };
+  const plan = makePlan(profile, 'ppl', { blockStart: new Date(MONDAY - 40 * DAY).toISOString() });
+  const flat = blockHistory('bench_press', [100, 100, 100, 100, 100]);
+  const target = weeklyTargets(profile).chest;
+  const cut = reviewBlock({ profile, plan, workouts: flat, lookup, exercises: EXERCISES, phase: 'cut' }).volume.chest;
+  assert.equal(cut.to, target);
+  assert.match(cut.reason, /cut/);
+  assert.equal(reviewBlock({ profile, plan, workouts: flat, lookup, exercises: EXERCISES, phase: 'bulk' }).volume.chest.to, target + 2);
+});

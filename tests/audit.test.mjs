@@ -44,6 +44,15 @@ test('longer breaks come back lighter', () => {
   assert.equal(breakFactor(200), 0.75);
 });
 
+test('a later set missing its goal doesn\'t cap the first set when the first set hit', () => {
+  const s = sug([S(7, [[185, 10, 10], [185, 10, 10], [185, 7, 10]])]);
+  assert.equal(s.weight, 185);
+  assert.ok(s.reps[0] >= 10, `first-set goal ${s.reps[0]} after hitting 10`);
+  // Every set short (best 9 against 10): the first set asks at most one more.
+  const allShort = sug([S(7, [[185, 9, 10], [185, 8, 10], [185, 7, 10]])]);
+  assert.ok(allShort.reps[0] <= 10, `first-set goal ${allShort.reps[0]}`);
+});
+
 test('a stalled lift is flagged; a progressing one is not', () => {
   // Flat and missing goals: stalled.
   const flat = [S(42, [[200, 6]]), S(35, [[200, 7]]), S(28, [[200, 8]]), S(21, [[200, 8, 9]]), S(14, [[200, 8, 9]]), S(7, [[200, 8, 9]])];

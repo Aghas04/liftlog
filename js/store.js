@@ -133,12 +133,20 @@ export function setExSetting(exId, key, value) {
   save();
 }
 
+// Rest learned from your own sets (rest.js), set by the app: { exId: { rest } }.
+let learned = {};
+export const setLearnedRests = m => { learned = m || {}; };
+export const learnedRest = exId => learned[exId] || null;
+
 // Rest before the next set (engine.restSeconds has the rules and evidence).
-// Your own rest for a lift wins; then the rest the plan set for it today
-// (90 s on isolation lifts when the session needs the time).
+// Your own rest for a lift wins; then the rest learned from your sets (at least
+// 3 min on strength sets); then the plan's rest for it today (90 s on isolation
+// lifts when the session needs the time); then the rules.
 export function restFor(exId) {
   const entry = state.activeWorkout?.exercises.find(e => e.exId === exId);
-  return restSeconds(exercise(exId), { own: state.exerciseSettings[exId]?.rest ?? entry?.rest, base: state.settings.defaultRest, zone: entry?.zone });
+  const lr = learned[exId]?.rest;
+  const fromLearning = lr != null ? (entry?.zone && entry.zone[1] <= 6 ? Math.max(lr, 180) : lr) : null;
+  return restSeconds(exercise(exId), { own: state.exerciseSettings[exId]?.rest ?? fromLearning ?? entry?.rest, base: state.settings.defaultRest, zone: entry?.zone });
 }
 
 // Latest bodyweight on or before a date (ISO string), or null.
