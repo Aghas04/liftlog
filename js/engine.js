@@ -611,6 +611,15 @@ export function suggest(ex, history, opts) {
       : shift <= -3 ? 'Same weight — go for every rep.'
         : cutting ? 'On a cut: matching last time keeps your strength and muscle; add a rep if you have it.' : 'Same weight, beat last time by a rep.';
   const out = build(w, t, missedLast ? 'hold' : 'reps', reason, 1);
+  // The text matches the first set's goal (it can be 2 more than last time
+  // when you're fresher for this lift today, or the same when you're later).
+  const d = out.reps[0] - rB;
+  if (!badDay && !missedLast && d !== 1 && !(cutting && d < 2)) {
+    out.reason = d >= 2
+      ? `Same weight, ${d} more reps than last time on your first set: you're fresher for this lift today (earlier in the workout or less tired).`
+      : d === 0 ? 'Same weight: match last time. This lift comes later in today\'s workout, so equal reps is progress.'
+        : d < 0 ? `Same weight, ${-d} fewer reps than last time: this lift comes later in today's workout, so that's about the same effort.` : out.reason;
+  }
   return stalled ? { ...out, stalled: true } : out;
 }
 
@@ -623,6 +632,30 @@ export function targetFor(sug, ex, weight, setIndex, bw) {
   if (load <= 0) return null;
   const reps = repsAt(sug.est, load) + (sug.bonus || 0) - (sug.drop || 0) * setIndex;
   return Math.min((sug.zone || zoneFor(ex))[1], Math.max(1, Math.round(reps)));
+}
+
+/**
+ * The plan decides how many sets a lift gets today, which can differ from last
+ * time. Reshape a suggestion to n working sets so its goal line and the set
+ * rows always agree: fewer drops the last sets; more adds sets at the last
+ * set's weight, each the planned drop lower, never under the range floor (the
+ * same rule the suggestion uses). Timed holds repeat the last time.
+ */
+export function fitSets(sug, n, ex) {
+  if (!sug || !(n > 0) || !Array.isArray(sug.reps) || !sug.reps.length || sug.reps.length === n) return sug;
+  const reps = sug.reps.slice(0, n);
+  const weights = sug.weights ? sug.weights.slice(0, n) : null;
+  const zMin = (sug.zone || zoneFor(ex))[0];
+  const drop = ex.timed ? 0 : sug.drop ?? 1;
+  const floor = Math.max(1, Math.min(sug.reps[0], zMin));
+  while (reps.length < n) {
+    const i = reps.length;
+    // Straight sets: first set minus the planned drop per set; patterns: from the last set.
+    const r = weights ? reps[i - 1] - drop : sug.reps[0] - drop * i;
+    reps.push(Math.min(reps[i - 1], Math.max(floor, Math.round(r))));
+    if (weights) weights.push(weights[i - 1]);
+  }
+  return { ...sug, reps, ...(weights ? { weights } : {}) };
 }
 
 /**

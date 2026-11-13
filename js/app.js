@@ -14,7 +14,7 @@ import {
 import { learnRests } from './rest.js';
 import { APP_VERSION } from './version.js';
 import {
-  suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad, applyWeightChange, weightFit,
+  suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad, applyWeightChange, weightFit, fitSets,
   personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor, deloadSuggestion, deloadSetCount, retargetFrom, workWeightOf,
 } from './engine.js';
 import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter, weeklyTargets, goalSizing, modelSeconds } from './planner.js';
@@ -223,7 +223,7 @@ function refreshPlan() {
   w.exercises.forEach((e, i) => {
     if (e.sets.some(s => s.done) || e.suggestion?.kind === 'guess' || e.suggestion?.kind === 'calibrate') return;
     const ex = exercise(e.exId);
-    const sug = suggestionFor(ex, fatigueAt(w, i, true), e.zone);
+    const sug = fitSets(suggestionFor(ex, fatigueAt(w, i, true), e.zone), e.sets.filter(s => !s.warmup).length, ex);
     if (!sug) return;
     const old = e.suggestion;
     e.suggestion = sug;
@@ -320,6 +320,20 @@ function startWorkout(dayId, from, template, name, extra = {}, readiness = null)
 function resizeSets(entry, n) {
   const ex = exercise(entry.exId);
   const warm = entry.sets.filter(s => s.warmup);
+  // Not started: the suggestion itself takes the plan's set count, so the 🎯
+  // line and the rows match and extra sets get the planned drop.
+  if (entry.suggestion && !entry.sets.some(s => s.done && !s.warmup)) {
+    const old = entry.suggestion;
+    entry.suggestion = fitSets(old, n, ex);
+    const before = entry.sets.filter(s => !s.warmup);
+    const planned = k => old.weights?.[k] ?? old.weight;
+    entry.sets = [...warm, ...setsFrom(entry.suggestion).map((s, k) => {
+      const b = before[k];
+      // A weight you'd already changed stays, with its goal.
+      return b && b.weight != null && planned(k) != null && Math.abs(b.weight - planned(k)) > 1e-9 ? b : s;
+    })];
+    return;
+  }
   const work = entry.sets.filter(s => !s.warmup).slice(0, n);
   while (work.length < n) {
     const prev = work.at(-1) || { weight: null, target: null };
@@ -418,6 +432,16 @@ function retargetRest(c) {
   });
   if (changed.length) toast(c.s.reps < c.s.target.reps ? 'Harder than planned today: next sets adjusted' : 'Stronger than planned: next sets raised');
   return changed;
+}
+
+// Rebuild a lift you haven't started (new step, machine limit, form reset):
+// fresh goals, same number of sets as before.
+function rebuildEntry(e, fatigue) {
+  const n = e.sets.filter(s => !s.warmup).length;
+  const fresh = buildEntry(e.exId, null, fatigue, e.zone);
+  e.suggestion = fresh.suggestion;
+  e.sets = fresh.sets;
+  if (n > 0) resizeSets(e, n);
 }
 
 // A fresh exercise entry. `from` gives a rough starting weight when swapping
@@ -3485,8 +3509,7 @@ const actions = {
     setExSetting(e.exId, 'increment', +el.dataset.v);
     // Nothing logged yet: rebuild the suggestion with the new step.
     if (!e.sets.some(s => s.done)) {
-      e.suggestion = suggestionFor(exercise(e.exId), fatigueAt(state.activeWorkout, ui.sheet.ei, true), e.zone);
-      e.sets = setsFrom(e.suggestion);
+      rebuildEntry(e, fatigueAt(state.activeWorkout, ui.sheet.ei, true));
       save();
     }
     renderSheet();
@@ -3508,11 +3531,7 @@ const actions = {
       sets: lastS ? workingSets(lastS).length : 3,
     });
     // Nothing logged yet: start this lift lighter now.
-    if (!e.sets.some(s => s.done)) {
-      const fresh = buildEntry(e.exId, null, fatigueAt(w, ei, true), e.zone);
-      e.suggestion = fresh.suggestion;
-      e.sets = fresh.sets;
-    }
+    if (!e.sets.some(s => s.done)) rebuildEntry(e, fatigueAt(w, ei, true));
     save();
     closeSheet();
     toast(`${ex.name}: starting fresh with clean form`);
@@ -3523,11 +3542,7 @@ const actions = {
     setExSetting(id, 'formReset', undefined);
     const w = state.activeWorkout;
     const ei = w ? w.exercises.findIndex(x => x.exId === id && !x.sets.some(s => s.done)) : -1;
-    if (ei >= 0) {
-      const fresh = buildEntry(id, null, fatigueAt(w, ei, true), w.exercises[ei].zone);
-      w.exercises[ei].suggestion = fresh.suggestion;
-      w.exercises[ei].sets = fresh.sets;
-    }
+    if (ei >= 0) rebuildEntry(w.exercises[ei], fatigueAt(w, ei, true));
     save();
     toast('Form reset undone: all your sessions count again');
     if (ui.sheet) renderSheet();
@@ -3538,10 +3553,7 @@ const actions = {
     const v = parseFloat($('#exMax').value);
     setExSetting(e.exId, 'maxWeight', v > 0 ? fromDisplay(v, U()) : undefined);
     // Nothing logged yet: rebuild the suggestion under the new limit.
-    if (!e.sets.some(s => s.done)) {
-      e.suggestion = suggestionFor(exercise(e.exId), fatigueAt(state.activeWorkout, ui.sheet.ei, true), e.zone);
-      e.sets = setsFrom(e.suggestion);
-    }
+    if (!e.sets.some(s => s.done)) rebuildEntry(e, fatigueAt(state.activeWorkout, ui.sheet.ei, true));
     save();
     toast(v > 0 ? `Heaviest weight saved: ${fmtW(v)} ${wu()}` : 'Limit removed');
     renderSheet();

@@ -2,7 +2,7 @@
 // later sets follow the first, and a picked weight is checked against the range.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyWeightChange, weightFit, targetFor, repsAt } from '../js/engine.js';
+import { applyWeightChange, weightFit, targetFor, repsAt, fitSets, suggest } from '../js/engine.js';
 
 const bench = { equipment: 'barbell', compound: true };
 // Plan 185 x 11, 10, 9 from a 247 lb estimate (one rep beyond it, a rep less each set).
@@ -82,4 +82,35 @@ test('a picked weight is checked against the rep range, with a weight that fits'
   const d = weightFit({ est: 300, drop: 1, bonus: 1, zone: [6, 12] }, dips, 100, 0, 180, 5);
   assert.equal(d.fit, 'heavy');
   assert.ok(d.better < 100 && d.better >= 0);
+});
+
+// ---------- The plan's set count and the goal line agree (v47) ----------
+
+test('a suggestion takes the plan\'s set count: extra sets keep the planned drop, fewer drops the last', () => {
+  assert.deepEqual(fitSets(sug, 4, bench).reps, [11, 10, 9, 8]);
+  assert.deepEqual(fitSets(sug, 2, bench).reps, [11, 10]);
+  assert.equal(fitSets(sug, 3, bench), sug, 'same count: unchanged');
+  // Never under the range floor.
+  assert.deepEqual(fitSets({ ...sug, reps: [7, 6, 6] }, 5, bench).reps, [7, 6, 6, 6, 6]);
+  // A pattern (heavier first set) extends at the last set's weight.
+  const p = fitSets({ ...sug, weight: 115, weights: [115, 100, 100], reps: [9, 11, 9], drop: 1 }, 4, bench);
+  assert.deepEqual(p.weights, [115, 100, 100, 100]);
+  assert.deepEqual(p.reps, [9, 11, 9, 8]);
+  assert.deepEqual(fitSets({ ...sug, weights: [49.5, 55, 55, 55], reps: [11, 10, 9, 8] }, 2, bench).weights, [49.5, 55]);
+  // Timed holds repeat the last time.
+  assert.deepEqual(fitSets({ reps: [40, 40], zone: [20, 90] }, 3, { timed: true }).reps, [40, 40, 40]);
+});
+
+test('the goal text says what the first set asks for', () => {
+  const DAY = 864e5, NOW = Date.UTC(2026, 10, 14, 12);
+  const s = (d, reps, fatigue) => ({ date: new Date(NOW - d * DAY).toISOString(), fatigue, sets: reps.map(r => ({ weight: 105, reps: r, done: true })) });
+  const iso = { equipment: 'dumbbell', compound: false };
+  // Last time late in the workout (tired), today first: more than one extra rep.
+  const fresh = suggest(iso, [s(9, [9, 9, 9], 12), s(5, [10, 10, 9], 12), s(2, [10, 10, 10], 12)], { increment: 5, now: NOW, fatigue: 0 });
+  // (Your shrugs: 105 x 10, 10, 10 last time, later in the workout -> 12 today.)
+  assert.deepEqual(fresh.reps, [12, 12, 12]);
+  assert.match(fresh.reason, /2 more reps than last time/);
+  const same = suggest(iso, [s(9, [9, 9, 9], 0), s(5, [10, 10, 9], 0), s(2, [10, 10, 10], 0)], { increment: 5, now: NOW, fatigue: 0 });
+  assert.equal(same.reps[0], 11);
+  assert.match(same.reason, /beat last time by a rep/);
 });
