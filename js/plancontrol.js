@@ -562,8 +562,8 @@ export function sessionEntries(session) {
 }
 
 /** Run the block review with the plan's own settings. */
-export function runReview(plan, { workouts, lookup, bwOn, exercises, usage, blocked, secPerSet, phase }) {
-  return reviewBlock({ profile: plan.profile, plan, workouts: ownWorkouts(plan, workouts), lookup, bwOn, exercises, usage, blocked, secPerSet, phase });
+export function runReview(plan, { workouts, lookup, bwOn, exercises, usage, blocked, secPerSet, phase, resets }) {
+  return reviewBlock({ profile: plan.profile, plan, workouts: ownWorkouts(plan, workouts), lookup, bwOn, exercises, usage, blocked, secPerSet, phase, resets });
 }
 
 /**

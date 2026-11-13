@@ -157,16 +157,37 @@ function prToast(detail) {
   setTimeout(() => el.remove(), 3000);
 }
 
+// Form reset: a lift done lighter on purpose to fix technique. Goals, stall
+// checks, plan reviews and PRs restart from it; old sessions stay in history.
+const resetOf = id => exSetting(id, 'formReset') || null;
+const formResets = () => Object.fromEntries(Object.entries(state.exerciseSettings).filter(([, v]) => v?.formReset?.at).map(([id, v]) => [id, v.formReset.at]));
+// Start about 20% under the old working weight; the first clean set then sets
+// the rest (practical starting point, corrected by your own first set).
+const RESET_FRACTION = 0.8;
+function resetStart(ex, zone) {
+  const r = resetOf(ex.id);
+  if (!r?.oldWeight || isTimed(ex) || isBW(ex) || isAssist(ex)) return null;
+  const weight = snapToStep(r.oldWeight * RESET_FRACTION, increment(ex));
+  if (!(weight > 0)) return null;
+  const [lo, hi] = zone || zoneFor(ex);
+  const mid = Math.round((lo + hi) / 2);
+  return { weight, reps: Array.from({ length: r.sets || 3 }, (_, i) => Math.max(lo, mid - (i ? 1 : 0))), kind: 'guess',
+    reason: `Form reset: about 20% under your old ${fmtW(toDisplay(r.oldWeight, U()))} ${wu()}. Full range, lower under control, stop with about 2 reps left; your first set sets the rest.` };
+}
+
 function getW(ctx) {
   return ctx === 'active' ? state.activeWorkout : state.workouts.find(w => w.id === ctx);
 }
 
 // Past sessions of an exercise, oldest first. Only workouts before `beforeIso` if given.
-function historyFor(exId, { excludeId, beforeIso } = {}) {
+// After a form reset, only sessions from the reset on (all: true for every session).
+function historyFor(exId, { excludeId, beforeIso, all = false } = {}) {
   const out = [];
+  const since = all ? null : resetOf(exId)?.at;
   for (const w of state.workouts) {
     if (w.id === excludeId) continue;
     if (beforeIso && w.date >= beforeIso) continue;
+    if (since && w.date < since) continue;
     w.exercises.forEach((e, i) => {
       if (e.exId !== exId) return;
       out.push({ date: w.date, difficulty: e.difficulty, sets: e.sets, deload: e.deload, fatigue: fatigueAt(w, i, false), bw: bodyweightOn(w.date) });
@@ -405,6 +426,7 @@ function retargetRest(c) {
 function buildEntry(exId, from, fatigue = 0, zone = null) {
   const ex = exercise(exId);
   let sug = suggestionFor(ex, fatigue, zone);
+  if (!sug) sug = resetStart(ex, zone);
   if (!sug && !from) from = relatedStart(ex);
   if (!sug && from) {
     const weight = swapWeight(from.ex, ex, from.weight, increment(ex));
@@ -516,10 +538,12 @@ function workoutPRs(w, excludeId) {
     const done = { sets: e.sets.filter(s => s.done && s.reps > 0) };
     const now = sessionE1RM(done, ex, bw);
     if (!now) continue;
-    const hist = historyFor(e.exId, { excludeId });
+    const r = resetOf(e.exId);
+    const after = r && (w.date || w.startedAt) >= r.at;
+    const hist = historyFor(e.exId, { excludeId, all: !after });
     if (!hist.length) continue;
     const prev = Math.max(...hist.map(h => sessionE1RM(h, ex, bodyweightOn(h.date))));
-    if (now > prev + 0.01) prs.push({ name: ex.name, now, prev });
+    if (now > prev + 0.01) prs.push({ name: after ? `${ex.name} (clean form)` : ex.name, now, prev });
   }
   return prs;
 }
@@ -728,7 +752,8 @@ function exCard(w, ctx, ei, live) {
   if (live && cardComplete(e) && !ui.openCards?.has(e.uid)) return doneCardHtml(w, ctx, ei);
   const ex = exercise(e.exId);
   const isCurrent = live && currentIndex(w) === ei;
-  const hist = live ? historyFor(e.exId) : historyFor(e.exId, { excludeId: w.id, beforeIso: w.date });
+  // A past workout shows the session before it as it was (form reset or not).
+  const hist = live ? historyFor(e.exId) : historyFor(e.exId, { excludeId: w.id, beforeIso: w.date, all: true });
   const last = [...hist].reverse().find(h => workingSets(h).length);
   const sug = e.suggestion;
   const note = exSetting(e.exId, 'note');
@@ -755,9 +780,10 @@ function exCard(w, ctx, ei, live) {
       else sugHtml = `<div class="suggest first"><div class="why">New lift: pick a weight you could do about ${Math.min(hi, lo + 4)} times with good form and stop with 2 reps left. After the first set, the app sets targets for the rest.</div></div>`;
     }
   }
+  const rs = live ? resetOf(e.exId) : null;
   const lastHtml = last
     ? `<div class="last">Last (${relDays(last.date)}): ${esc(setsSummary(ex, last.sets))}${last.difficulty && last.difficulty !== 'hard' ? ` · ${FEEL[last.difficulty]}` : ''}</div>`
-    : '';
+    : rs ? `<div class="last">Form reset ${relDays(rs.at)}: building back from ${esc(weightLabel(ex, rs.oldWeight || 0))} with clean reps.</div>` : '';
 
   return `
   <section class="ex-card ${cardComplete(e) ? 'complete' : ''} ${e.group ? 'ss' : ''} ${isCurrent ? 'current' : ''}" data-w="${ctx}" data-e="${ei}" style="--c:${dayType(w.dayType)?.color}">
@@ -980,7 +1006,7 @@ function deloadBanner() {
     return `<div class="banner info"><div>🧘 <b>Deload week</b> until ${until}. Suggestions are about 15% lighter.</div><button data-act="endDeload">End</button></div>`;
   }
   const dismissed = state.settings.deloadDismissed && Date.now() - new Date(state.settings.deloadDismissed).getTime() < 14 * DAY;
-  const advice = !dismissed && deloadAdvice(state.workouts, exercise, bodyweightOn);
+  const advice = !dismissed && deloadAdvice(state.workouts, exercise, bodyweightOn, Date.now(), formResets());
   if (!advice) return '';
   const names = advice.stalled.slice(0, 3).map(id => exercise(id).name).join(', ');
   return `<div class="banner deload"><div>📉 <b>${advice.stalled.length} lifts have stalled</b> (${esc(names)}). A lighter week often gets you moving again.</div>
@@ -1187,7 +1213,9 @@ function progressLifts() {
   const exIds = [...seen.keys()];
   if (!ui.progressEx || !seen.has(ui.progressEx)) ui.progressEx = exIds[0];
   const ex = exercise(ui.progressEx);
-  const hist = historyFor(ui.progressEx).filter(h => workingSets(h).length);
+  const hist = historyFor(ui.progressEx, { all: true }).filter(h => workingSets(h).length);
+  const reset = resetOf(ui.progressEx);
+  const resetT = reset ? new Date(reset.at).getTime() : null;
   const metricFn = {
     e1rm: h => sessionE1RM(h, ex, bodyweightOn(h.date)),
     top: h => Math.max(...workingSets(h).map(s => loadOf(ex, s.weight, h.date))),
@@ -1198,13 +1226,22 @@ function progressLifts() {
   ui.chartUnit = timedLift ? 's' : null;
   const allPoints = hist.map(h => ({ x: new Date(h.date).getTime(), y: timedLift ? sessionE1RM(h, ex, 0) : toDisplay(metricFn(h), U()), info: setsSummary(ex, h.sets) })).filter(p => p.y > 0);
   // Flag PRs over the full history so a short range doesn't invent new "bests".
+  // After a form reset, PRs count from the reset (clean-form bests).
   let best = -Infinity;
-  allPoints.forEach((p, i) => { p.pr = i > 0 && p.y > best + 0.01; best = Math.max(best, p.y); });
+  allPoints.forEach((p, i) => {
+    if (resetT && p.x >= resetT && best !== -Infinity && (allPoints[i - 1]?.x ?? 0) < resetT) best = -Infinity;
+    p.pr = best !== -Infinity && p.y > best + 0.01; best = Math.max(best, p.y);
+  });
   const points = inRange(allPoints, 'lift');
+  const cleanPts = resetT ? points.filter(p => p.x >= resetT) : points;
+  const cleanLast = resetT ? allPoints.filter(p => p.x >= resetT).at(-1) : null;
+  const oldTop = resetT ? Math.max(0, ...allPoints.filter(p => p.x < resetT).map(p => p.y)) : 0;
+  const resetHtml = reset ? `<div class="chart-info">Form reset ${relDays(reset.at)}${cleanLast && oldTop && ui.progressMetric !== 'volume' ? `: clean form is at <b>${Math.round((cleanLast.y / oldTop) * 100)}%</b> of your old best` : ': log a clean session to start the new line'}. <button class="link-btn" data-act="undoFormReset" data-id="${ui.progressEx}">Undo reset</button></div>` : '';
   ui.chartPoints = points;
   const lastY = allPoints.at(-1)?.y ?? 0;
-  const firstY = points[0]?.y ?? 0;
-  const delta = firstY && points.length > 1 ? ((points.at(-1).y - firstY) / firstY) * 100 : 0;
+  // Change over the range, from the reset on when there is one (the planned drop isn't a loss).
+  const firstY = cleanPts[0]?.y ?? 0;
+  const delta = firstY && cleanPts.length > 1 ? ((cleanPts.at(-1).y - firstY) / firstY) * 100 : 0;
   const metricName = timedLift ? 'Longest hold' : { e1rm: 'Est. 1-rep max', top: 'Top set weight', volume: 'Session volume' }[ui.progressMetric];
 
   // PRs
@@ -1220,7 +1257,7 @@ function progressLifts() {
   // Strength levels
   const std = state.settings.standards;
   const bw = bodyweightOn();
-  const levels = strengthLevels(state.workouts, exercise, bw, std);
+  const levels = strengthLevels(state.workouts, exercise, bw, std, formResets());
   const strength = !std
     ? `<p class="muted small" style="margin-top:0">Compare your lifts to common strength standards. Pick a set:</p>
        <div class="chips"><button data-act="setStandards" data-v="male">Men's standards</button><button data-act="setStandards" data-v="female">Women's standards</button></div>`
@@ -1245,9 +1282,10 @@ function progressLifts() {
   </div>
   <div class="chart-wrap">
     <div class="chart-head"><div><div class="muted small">${metricName}</div><b>${Math.round(lastY).toLocaleString()} ${timedLift ? 's' : wu()}</b></div>
-      ${points.length > 1 ? `<span class="delta ${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(1)}% ${rangeOf('lift')[3]}</span>` : ''}</div>
+      ${cleanPts.length > 1 ? `<span class="delta ${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(1)}% ${resetT && points[0]?.x < resetT ? 'since reset' : rangeOf('lift')[3]}</span>` : ''}</div>
     ${allPoints.length > 1 ? rangeChips('lift') : ''}
-    ${rangedChart(points, allPoints.length, { prs: ui.progressMetric !== 'volume', trend: true }, 'Log this lift again to see a trend.')}
+    ${rangedChart(points, allPoints.length, { prs: ui.progressMetric !== 'volume', trend: !resetT || cleanPts.length >= 3, splitAt: resetT }, 'Log this lift again to see a trend.')}
+    ${resetHtml}
     ${points.length > 1 ? `<div class="chart-info" id="chartInfo">Tap a point to see that session. ★ = new best${points.length >= 3 ? ' · dotted line = trend' : ''}</div>` : ''}
   </div>
 
@@ -2571,14 +2609,27 @@ function sheetHtml() {
           <button data-act="addWarmups"><span>🔥</span>Add warm-up sets</button>
           <button data-act="swapSheet"><span>🔄</span>Swap exercise</button>
           <button data-act="howtoOpen" data-id="${e.exId}"><span>📖</span>How to do it · fix my form</button>
+          ${isTimed(ex) ? '' : resetOf(e.exId) ? `<button data-act="undoFormReset" data-id="${e.exId}"><span>↩️</span>Undo form reset (${relDays(resetOf(e.exId).at)})</button>` : `<button data-act="formResetSheet"><span>🎯</span>Go lighter to fix my form</button>`}
           <button data-act="hurtSheet"><span>🤕</span>This hurt</button>
           <button data-act="notAtGym"><span>🚫</span>My gym doesn't have this</button>
           <button data-act="star" data-id="${e.exId}"><span>${stars().includes(e.exId) ? '★' : '☆'}</span>${stars().includes(e.exId) ? 'Starred: at my gym' : 'Star: at my gym'}</button>
-          ${ex.custom ? `<button data-act="matchSheet" data-id="${ex.id}"><span>🔗</span>Match to a library exercise</button>` : historyFor(ex.id).length ? `<button data-act="moveSheet" data-id="${ex.id}"><span>↔️</span>Move past history to another exercise</button>` : ''}
+          ${ex.custom ? `<button data-act="matchSheet" data-id="${ex.id}"><span>🔗</span>Match to a library exercise</button>` : historyFor(ex.id, { all: true }).length ? `<button data-act="moveSheet" data-id="${ex.id}"><span>↔️</span>Move past history to another exercise</button>` : ''}
           <button data-act="supersetSheet"><span>🔗</span>${e.group ? 'Add another to this superset' : 'Superset with…'}</button>
           ${e.group ? `<button data-act="unSuperset"><span>✂️</span>Remove from superset</button>` : ''}
           <button class="danger" data-act="removeExMenu"><span>🗑</span>Remove exercise</button>
         </div>`;
+    }
+    case 'formreset': {
+      const e = state.activeWorkout.exercises[s.ei];
+      const ex = exercise(e.exId);
+      const hist = historyFor(e.exId, { all: true }).filter(h => workingSets(h).length);
+      const old = hist.length ? workWeightOf(workingSets(hist.at(-1))) : 0;
+      const start = old > 0 && !isBW(ex) && !isAssist(ex) ? snapToStep(old * RESET_FRACTION, increment(ex)) : 0;
+      return `<h2>Go lighter to fix your form</h2>
+        <p>Cheated reps move weight, not muscle: growth comes from tension on the target muscle through a full range of motion. Going lighter to do it right is the better path.</p>
+        <p class="muted small">From today, this lift starts fresh: goals, stall checks, plan reviews and PRs only count your clean-form sessions, so the lighter weight isn't treated as lost strength. Your old sessions stay in your history and show faded on the chart.</p>
+        ${start ? `<p class="muted small">Start around <b>${esc(weightLabel(ex, start))}</b> (about 20% under ${esc(weightLabel(ex, old))}). Use the full range, lower under control, and stop with about 2 reps left. Your first set sets the rest.</p>` : '<p class="muted small">Pick a weight you can move through the full range under control, and stop with about 2 reps left. Your first set sets the rest.</p>'}
+        <div class="stack"><button class="btn primary" data-act="formReset">Reset this lift</button><button class="btn" data-act="closeSheet">Cancel</button></div>`;
     }
     case 'swap': {
       const e = state.activeWorkout.exercises[s.ei];
@@ -3386,6 +3437,47 @@ const actions = {
     renderSheet();
     render();
   },
+  formResetSheet() { openSheet({ type: 'formreset', ei: ui.sheet.ei }); },
+  formReset() {
+    const w = state.activeWorkout;
+    const ei = ui.sheet.ei;
+    const e = w.exercises[ei];
+    const ex = exercise(e.exId);
+    const hist = historyFor(e.exId, { all: true }).filter(h => workingSets(h).length);
+    const lastS = hist.at(-1);
+    setExSetting(e.exId, 'formReset', {
+      // Today's session is the first clean one.
+      at: w.startedAt || new Date().toISOString(),
+      oldWeight: lastS ? workWeightOf(workingSets(lastS)) : 0,
+      oldBest: Math.max(0, ...hist.map(h => sessionE1RM(h, ex, bodyweightOn(h.date)))),
+      sets: lastS ? workingSets(lastS).length : 3,
+    });
+    // Nothing logged yet: start this lift lighter now.
+    if (!e.sets.some(s => s.done)) {
+      const fresh = buildEntry(e.exId, null, fatigueAt(w, ei, true), e.zone);
+      e.suggestion = fresh.suggestion;
+      e.sets = fresh.sets;
+    }
+    save();
+    closeSheet();
+    toast(`${ex.name}: starting fresh with clean form`);
+    render();
+  },
+  undoFormReset(el) {
+    const id = el.dataset.id;
+    setExSetting(id, 'formReset', undefined);
+    const w = state.activeWorkout;
+    const ei = w ? w.exercises.findIndex(x => x.exId === id && !x.sets.some(s => s.done)) : -1;
+    if (ei >= 0) {
+      const fresh = buildEntry(id, null, fatigueAt(w, ei, true), w.exercises[ei].zone);
+      w.exercises[ei].suggestion = fresh.suggestion;
+      w.exercises[ei].sets = fresh.sets;
+    }
+    save();
+    toast('Form reset undone: all your sessions count again');
+    if (ui.sheet) renderSheet();
+    render();
+  },
   saveMax() {
     const e = state.activeWorkout.exercises[ui.sheet.ei];
     const v = parseFloat($('#exMax').value);
@@ -3737,7 +3829,7 @@ const actions = {
 
   // Block review
   reviewSheet() {
-    ui.review = runReview(state.plan, { workouts: state.workouts, lookup: exercise, bwOn: bodyweightOn, exercises: pool().exercises, usage: pool().usage, blocked: blocked(), secPerSet: pace(), phase: state.settings.dietPhase || 'maintain' });
+    ui.review = runReview(state.plan, { workouts: state.workouts, lookup: exercise, bwOn: bodyweightOn, exercises: pool().exercises, usage: pool().usage, blocked: blocked(), secPerSet: pace(), phase: state.settings.dietPhase || 'maintain', resets: formResets() });
     ui.reviewAcc = { volume: {}, swaps: [] };
     openSheet({ type: 'review' });
   },

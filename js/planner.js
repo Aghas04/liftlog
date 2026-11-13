@@ -930,8 +930,11 @@ export function planWeek(input) {
  * stalled lifts and accessory rotation.
  */
 export function reviewBlock(input) {
-  const { profile, plan, workouts, lookup, bwOn = () => 0, exercises, usage = {}, blocked = [], secPerSet = 130, phase = 'maintain' } = input;
+  const { profile, plan, workouts, lookup, bwOn = () => 0, exercises, usage = {}, blocked = [], secPerSet = 130, phase = 'maintain', resets = {} } = input;
   const start = plan.blockStart;
+  // A form reset (lighter on purpose to fix technique) isn't lost strength:
+  // a lift's progress counts only sessions from its reset on.
+  const clean = (id, date) => !resets[id] || date >= resets[id];
   const block = workouts.filter(w => w.date >= start);
   const targets = weeklyTargets(profile, plan.volume, secPerSet);
   const volume = {};
@@ -942,7 +945,7 @@ export function reviewBlock(input) {
     let sessions = 0, missedN = 0;
     for (const id of ids) {
       const ex = lookup(id);
-      const hist = block.flatMap(w => w.exercises.filter(e => e.exId === id).map(e => ({ date: w.date, sets: e.sets }))).sort((a, b) => a.date.localeCompare(b.date));
+      const hist = block.flatMap(w => w.exercises.filter(e => e.exId === id).map(e => ({ date: w.date, sets: e.sets }))).filter(h => clean(id, h.date)).sort((a, b) => a.date.localeCompare(b.date));
       sessions += hist.length;
       missedN += hist.filter(sessionMissed).length;
       if (hist.length < 3) continue;
@@ -995,7 +998,7 @@ export function reviewBlock(input) {
         };
         // Progress of a lift over the block, or null without enough sessions.
         const progressOfLift = (id, ex, minSessions) => {
-          const hist = block.flatMap(w => w.exercises.filter(e => e.exId === id).map(e => ({ date: w.date, sets: e.sets })));
+          const hist = block.flatMap(w => w.exercises.filter(e => e.exId === id).map(e => ({ date: w.date, sets: e.sets }))).filter(h => clean(id, h.date));
           if (hist.length < minSessions) return null;
           const first = Math.max(...hist.slice(0, 2).map(h => sessionE1RM(h, ex, bwOn(h.date))));
           const last = Math.max(...hist.slice(-2).map(h => sessionE1RM(h, ex, bwOn(h.date))));

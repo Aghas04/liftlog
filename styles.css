@@ -933,3 +933,5 @@ a.btn { display: flex; align-items: center; justify-content: center; text-decora
 .banner.stall .banner-btns button { text-align: left; padding: 8px 0; }
 .link-btn { display: block; margin-top: 6px; padding: 4px 0; background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px; font-weight: 700; text-align: left; cursor: pointer; }
 .version { text-align: center; margin-top: 14px; }
+/* Form reset: sessions before it are faded on the chart. */
+.chart .pt.old { opacity: .35; }

@@ -22,6 +22,7 @@ function star(cx, cy, r) {
  * points: [{ x: timestamp, y: number }] sorted by x
  * opts.prs:   star points that beat every earlier point
  * opts.trend: dotted trend line projected two weeks ahead
+ * opts.splitAt: timestamp of a form reset: a marker there, earlier points faded
  * Points get data-i so the page can show details on tap.
  */
 export function lineChart(points, opts = {}) {
@@ -67,6 +68,14 @@ export function lineChart(points, opts = {}) {
   }).join('');
 
   const d = points.map((p, i) => `${i ? 'L' : 'M'}${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(' ');
+  // Form reset: the old-form part of the line is faded, with a marker where it restarts.
+  const split = opts.splitAt && opts.splitAt > minX && opts.splitAt <= maxX ? sx(opts.splitAt).toFixed(1) : null;
+  const oldPts = split ? points.filter(p => p.x < opts.splitAt) : [];
+  const oldD = oldPts.length > 1 ? oldPts.map((p, i) => `${i ? 'L' : 'M'}${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(' ') : '';
+  const newPts = split ? points.filter(p => p.x >= opts.splitAt) : points;
+  const newD = newPts.map((p, i) => `${i ? 'L' : 'M'}${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(' ');
+  const marker = split ? `<line x1="${split}" x2="${split}" y1="${PAD.t}" y2="${H - PAD.b}" stroke="#8b93a1" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="${(+split + 4).toFixed(1)}" y="${PAD.t + 10}" fill="#8b93a1" font-size="10">Form reset</text>` : '';
   const area = `${d} L${sx(points[points.length - 1].x).toFixed(1)},${H - PAD.b} L${sx(points[0].x).toFixed(1)},${H - PAD.b} Z`;
 
   // Too many points to show dots cleanly; keep tap targets and PR stars.
@@ -78,9 +87,10 @@ export function lineChart(points, opts = {}) {
     // A point may carry its own PR flag (computed over full history when the chart is filtered).
     const isPR = opts.prs && (p.pr ?? (i > 0 && p.y > best + 0.01));
     best = Math.max(best, p.y);
-    const mark = isPR
+    const old = split && p.x < opts.splitAt;
+    const mark = isPR && !old
       ? `<polygon points="${star(+cx, +cy, 7)}" class="pt pr" data-i="${i}"/>`
-      : `<circle cx="${cx}" cy="${cy}" r="${dense ? 0 : 3.5}" class="pt" data-i="${i}"/>`;
+      : `<circle cx="${cx}" cy="${cy}" r="${dense ? 0 : 3.5}" class="pt${old ? ' old' : ''}" data-i="${i}"/>`;
     return `${mark}<circle cx="${cx}" cy="${cy}" r="14" fill="transparent" data-act="chartPt" data-i="${i}"/>`;
   }).join('');
 
@@ -96,7 +106,9 @@ export function lineChart(points, opts = {}) {
     ${grid}
     <path d="${area}" fill="url(#g)"/>
     ${trendLine}
-    <path d="${d}" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    ${marker}
+    ${oldD ? `<path d="${oldD}" fill="none" style="stroke:var(--accent)" stroke-opacity="0.35" stroke-width="2" stroke-dasharray="3 3" stroke-linejoin="round"/>` : ''}
+    <path d="${split ? newD : d}" fill="none" style="stroke:var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
     ${marks}
     <text x="${PAD.l}" y="${H - 6}" fill="#8b93a1" font-size="10">${dateLabel(points[0].x, long)}</text>
     <text x="${W - PAD.r}" y="${H - 6}" fill="#8b93a1" font-size="10" text-anchor="end">${trend ? 'in 2 wks' : dateLabel(points[points.length - 1].x, long)}</text>

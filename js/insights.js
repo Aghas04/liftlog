@@ -92,13 +92,14 @@ export function phaseHint(bodyweight, phase = 'maintain', now = Date.now()) {
 }
 
 /** Exercise ids whose recent sessions have stalled or missed targets. */
-export function stalledLifts(workouts, lookup, bwOn, now = Date.now()) {
+// resets: { exId: ISO date } of form resets; sessions before one don't count.
+export function stalledLifts(workouts, lookup, bwOn, now = Date.now(), resets = {}) {
   const since = new Date(now - 42 * DAY).toISOString();
   const byEx = {};
   for (const w of [...workouts].sort((a, b) => a.date.localeCompare(b.date))) {
     if (w.date < since) continue;
     for (const e of w.exercises) {
-      if (!workingSets(e).length) continue;
+      if (!workingSets(e).length || (resets[e.exId] && w.date < resets[e.exId])) continue;
       (byEx[e.exId] ||= []).push({ date: w.date, sets: e.sets });
     }
   }
@@ -121,8 +122,8 @@ export function stalledLifts(workouts, lookup, bwOn, now = Date.now()) {
 }
 
 /** Suggest a deload when several tracked lifts have stalled. */
-export function deloadAdvice(workouts, lookup, bwOn, now = Date.now()) {
-  const { tracked, stalled } = stalledLifts(workouts, lookup, bwOn, now);
+export function deloadAdvice(workouts, lookup, bwOn, now = Date.now(), resets = {}) {
+  const { tracked, stalled } = stalledLifts(workouts, lookup, bwOn, now, resets);
   if (stalled.length >= 3 && stalled.length >= tracked.length * 0.4) return { stalled };
   return null;
 }
@@ -280,13 +281,13 @@ const STANDARDS = {
   },
 };
 
-export function strengthLevels(workouts, lookup, bw, standards) {
+export function strengthLevels(workouts, lookup, bw, standards, resets = {}) {
   const table = STANDARDS[standards];
   if (!table || !bw) return [];
   return Object.entries(table).map(([id, t]) => {
     const ex = lookup(id);
     let e1rm = 0;
-    for (const w of workouts) for (const e of w.exercises) if (e.exId === id) e1rm = Math.max(e1rm, sessionE1RM(e, ex, bw));
+    for (const w of workouts) for (const e of w.exercises) if (e.exId === id && !(resets[id] && w.date < resets[id])) e1rm = Math.max(e1rm, sessionE1RM(e, ex, bw));
     if (!e1rm) return null;
     const ratio = e1rm / bw;
     const idx = t.filter(x => ratio >= x).length;
