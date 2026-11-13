@@ -454,7 +454,8 @@ export function modelSeconds(workout, lookup, { rests = {}, restSec = 90 } = {})
 // big lifts) plus warm-ups, instead of one average per set.
 // rests: learned rest per lift (rest.js); timeScale: how your real workouts
 // compare with this per-lift timing (1 = exactly), so estimates match you.
-export function buildSession({ type, variant, setsByMuscle, lookup, profile, secPerSet = 130, restSec = 90, perLift = false, rests = {}, timeScale = 1 }) {
+// supersets: false to never pair lifts (time is then fit by trimming).
+export function buildSession({ type, variant, setsByMuscle, lookup, profile, secPerSet = 130, restSec = 90, perLift = false, rests = {}, timeScale = 1, supersets = true }) {
   const day = PLAN_DAYS[type];
   const items = [];
   const notes = [];
@@ -509,7 +510,7 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
     for (const it of items) if (!it.main && !lookup(it.exId).compound && restOf(it) > ISO_REST && !(rests[it.exId] > ISO_REST)) { it.rest = ISO_REST; cut++; }
     if (cut) notes.push(`Isolation lifts rest ${ISO_REST} s to fit your time`);
   }
-  if (timeOf() > limit) {
+  if (supersets && timeOf() > limit) {
     const free = items.filter(it => !it.main);
     let g = 0;
     for (const a of free) {
@@ -578,7 +579,7 @@ function sessionOrder(items, priority) {
  */
 export function planWeek(input) {
   // deload: this is a deload week (fewer sets). carry: false turns off carrying last week's shortfall.
-  const { profile, plan, workouts = [], lookup, now = Date.now(), secPerSet = 130, deload = false, carry = true, perLift = false, rests = {}, timeScale = null } = input;
+  const { profile, plan, workouts = [], lookup, now = Date.now(), secPerSet = 130, deload = false, carry = true, perLift = false, rests = {}, timeScale = null, supersets = true } = input;
   const split = splitById(plan.splitId);
   const ws = weekKey(now);
   const wk = String(ws);
@@ -809,7 +810,7 @@ export function planWeek(input) {
 
   // Build each session.
   const restSec = Math.max(60, secPerSet - 40);
-  const built = sessions.map((s, i) => buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec, perLift, rests, timeScale: timeScale || 1 }));
+  const built = sessions.map((s, i) => buildSession({ type: s.type, variant: s.variant, setsByMuscle: perSession[i], lookup, profile, secPerSet, restSec, perLift, rests, timeScale: timeScale || 1, supersets }));
 
   // Make the week add up. Count what's done plus what's planned exactly the way
   // the weekly card does (each lift's own indirect work), then trim or add
@@ -900,7 +901,9 @@ export function planWeek(input) {
     const extra = Math.max(5, Math.ceil((missing / days) * (secPerSet / 60) / 5) * 5);
     // More than half an hour extra isn't a realistic fix: suggest another day.
     const fix = capped || extra > 30 ? 'Another training day for them would fit it' : `About ${extra} more minutes on those days would fit it`;
-    notes.push(`${short.map(m => MUSCLES[m]).join(', ')}: below this week's goal. ${fix}; next week makes up part of it.`);
+    // Supersets switched off: say that turning them on fits more sets in the same time.
+    const ss = !supersets && !capped ? ' Supersets (Settings) would fit more in your time.' : '';
+    notes.push(`${short.map(m => MUSCLES[m]).join(', ')}: below this week's goal. ${fix}; next week makes up part of it.${ss}`);
   }
 
   sessions.forEach((s, i) => {

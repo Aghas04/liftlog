@@ -1592,7 +1592,7 @@ const planCtx = () => {
   const nextMon = planWeekKey(Date.now()) + 7 * DAY + 12 * 3600000;
   // A deload that touched last week: its low volume isn't a shortfall to make up.
   const lastMon = planWeekKey(Date.now()) - 7 * DAY;
-  return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, deload: inDeload(), perLift: true, rests: restSecsMap(), timeScale: timeScale(), deloadNext: until > nextMon, deloadPrev: until > lastMon && until - 7 * DAY < planWeekKey(Date.now()) };
+  return { exercises: p.exercises, lookup: exercise, blocked: blocked(), usage: p.usage, deload: inDeload(), perLift: true, rests: restSecsMap(), timeScale: timeScale(), supersets: state.settings.supersets !== false, deloadNext: until > nextMon, deloadPrev: until > lastMon && until - 7 * DAY < planWeekKey(Date.now()) };
 };
 const todayIdx = () => (new Date().getDay() + 6) % 7;
 
@@ -2966,6 +2966,8 @@ function sheetHtml() {
       const workout = `
         <div class="field"><span>Diet phase</span>${chips([['bulk', 'Bulking'], ['maintain', 'Maintaining'], ['cut', 'Cutting']], 'setPhase', null, k => (state.settings.dietPhase || 'maintain') === k)}
           <small class="muted">${{ bulk: 'Eating in a surplus: normal progression.', maintain: 'Eating at maintenance: normal progression.', cut: 'Eating in a deficit: muscle gain is limited, strength mostly holds, so keeping your weights counts as success and the plan doesn\'t add volume.' }[state.settings.dietPhase || 'maintain']}</small></div>
+        <div class="field"><span>Supersets in planned workouts</span>${chips([['on', 'On'], ['off', 'Off']], 'setSupersets', null, k => (state.settings.supersets !== false ? 'on' : 'off') === k)}
+          <small class="muted">${state.settings.supersets !== false ? 'When a session runs over your time, the plan pairs two lifts that don\'t share muscles, back to back. That keeps your reps and saves time.' : 'No pairing: when a session runs over your time, the plan trims sets instead, and the week shows any muscle below its goal.'} You can still superset by hand from a lift's ••• menu.</small></div>
         <div class="field"><span>Units</span>${chips([['lb', 'Pounds (lb)'], ['kg', 'Kilograms (kg)']], 'setUnits', null, k => U() === k)}</div>
         <div class="field"><span>Rest timer for isolation lifts. Big compound lifts get at least 2 min, strength sets (3–6 reps) 3 min. Set any lift your own way in its ••• menu</span>
           ${chips([60, 90, 120, 180].map(v => [v, `${v}s`]), 'defaultRest', null, k => state.settings.defaultRest === k)}</div>
@@ -4301,6 +4303,7 @@ const actions = {
   finishSheet() { openSheet({ type: 'finish' }); },
   finish() { finishWorkout(); },
   setPhase(el) { state.settings.dietPhase = el.dataset.v; state.settings.phaseSince = new Date().toISOString(); state.settings.phaseHintSnooze = null; save(); toast(`Diet phase: ${PHASE_NAME[el.dataset.v]}`); if (ui.sheet) renderSheet(); render(); },
+  setSupersets(el) { state.settings.supersets = el.dataset.v !== 'off'; save(); toast(state.settings.supersets ? 'Supersets on' : 'Supersets off: plans trim sets to fit your time instead'); if (ui.sheet) renderSheet(); render(); },
   phaseHintLater() { state.settings.phaseHintSnooze = new Date(Date.now() + 14 * DAY).toISOString(); save(); render(); },
   finishStale() { finishWorkout(new Date(lastActive(state.activeWorkout)).toISOString()); },
   // Sets with reps typed in but not ticked: tick them, then save.

@@ -417,3 +417,16 @@ test('review on a cut: holding strength keeps volume instead of adding sets', ()
   assert.match(cut.reason, /cut/);
   assert.equal(reviewBlock({ profile, plan, workouts: flat, lookup, exercises: EXERCISES, phase: 'bulk' }).volume.chest.to, target + 2);
 });
+
+test('supersets off: the plan never pairs lifts and says what it costs', async () => {
+  const { createPlan, currentWeek } = await import('../js/plancontrol.js');
+  const profile = { days: [0, 1, 2, 3, 4, 5], minutes: 60, level: 'advanced', goal: 'muscle', priority: [], equipment: 'gym', activities: [], avoid: [] };
+  const ctx = { exercises: EXERCISES.filter(e => e.common), lookup, blocked: [], usage: {}, perLift: true, timeScale: 1 };
+  const plan = createPlan({ profile, splitId: 'upper_lower', exercises: ctx.exercises, usage: {}, workouts: [], lookup, now: MONDAY - 3600e3 });
+  const pairs = wk => wk.days.filter(d => d.kind === 'train').flatMap(d => d.session.items).filter(it => it.superset).length;
+  assert.ok(pairs(currentWeek(plan, [], lookup, MONDAY, 160, ctx)) > 0, 'on: short sessions pair lifts');
+  const off = currentWeek(plan, [], lookup, MONDAY, 160, { ...ctx, supersets: false });
+  assert.equal(pairs(off), 0);
+  assert.ok(off.days.filter(d => d.kind === 'train').every(d => d.session.estMinutes <= 61), 'still fits the time');
+  assert.ok(off.notes.some(n => /Supersets \(Settings\)/.test(n)));
+});
