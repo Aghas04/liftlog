@@ -138,17 +138,31 @@ test('plans: the recommended split trains every big muscle at least twice a week
   }
 });
 
-test('plans: weekly volume stays inside the evidence-based range for each level', () => {
+test('plans: weekly volume stays inside the evidence-based range, unless the time can\'t hold it', async () => {
+  const { goalSizing } = await import('../js/planner.js');
   for (const level of Object.keys(LEVELS)) {
-    for (const minutes of [30, 60, 120]) {
-      const profile = { days: [0, 1, 3, 4], minutes, level, goal: 'muscle', priority: [], equipment: 'gym' };
-      const t = weeklyTargets(profile);
-      for (const m of MAJOR) {
-        const [lo, hi] = volumeBounds(profile, m);
-        assert.ok(t[m] >= lo && t[m] <= hi, `${level} ${minutes}min ${m}: ${t[m]} outside ${lo}-${hi}`);
-        assert.ok(t[m] >= 10, `${level}: ${m} below the 10 weekly sets research supports`);
+    for (const days of [[0, 2, 4], [0, 1, 3, 4], [0, 1, 2, 3, 4, 5]]) {
+      for (const minutes of [30, 45, 60, 90, 120]) {
+        const profile = { days, minutes, level, goal: 'muscle', priority: [], equipment: 'gym' };
+        const t = weeklyTargets(profile);
+        // Under the level's range only when the sessions can't hold it (the
+        // plan then says how many minutes would reach it).
+        const timeLimited = goalSizing(profile).minutesForMin > minutes;
+        for (const m of MAJOR) {
+          const [lo, hi] = volumeBounds(profile, m);
+          const label = `${level} ${days.length}x${minutes} ${m}: ${t[m]}`;
+          assert.ok(t[m] <= hi, `${label} over ${hi}`);
+          assert.ok(t[m] >= lo || timeLimited, `${label} under ${lo} though the time holds more`);
+          assert.ok(t[m] >= 2, label);
+        }
       }
     }
+  }
+  // Enough time: inside the range, and at least the 10 weekly sets research
+  // supports for intermediate and advanced lifters.
+  for (const level of ['intermediate', 'advanced']) {
+    const t = weeklyTargets({ days: [0, 1, 3, 4], minutes: 90, level, priority: [] });
+    for (const m of MAJOR) assert.ok(t[m] >= 10, `${level} 4x90 ${m}: ${t[m]}`);
   }
 });
 

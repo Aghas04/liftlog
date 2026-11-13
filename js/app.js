@@ -1715,7 +1715,9 @@ function viewPlan() {
   // Why the goal is what it is: the level's most, sized to session length.
   const sz = goalSizing(plan.profile, pace(), plan.splitId);
   const lvlName = { beginner: 'beginners', intermediate: 'intermediate lifters', advanced: 'advanced lifters' }[plan.profile.level] || 'your level';
-  const sizing = sz.goal < sz.max
+  const sizing = sz.goal < sz.min
+    ? `<p class="muted small">Your ${plan.profile.days.length} × ${plan.profile.minutes}-minute sessions hold about ${sz.goal} sets a week for each big muscle at your pace, so that's the goal: one you can reach. Research suggests ${sz.min}–${sz.max} for ${lvlName}; fewer sets still build muscle, just less per week. Sessions of about ${sz.minutesForMin} minutes, or more days, would reach ${sz.min}.</p>`
+    : sz.goal < sz.max
     ? `<p class="muted small">Big muscles aim for ${sz.goal} sets a week. The most for ${lvlName} is ${sz.max}; ${sz.splitCap && sz.splitCap <= sz.goal ? `this split trains each muscle ${sz.freq} times a week, at most 10 sets a session, so ${sz.splitCap} is what it holds (Upper / Lower or Full Body on 6 days reaches ${sz.max}).` : `the goal is sized to what your ${plan.profile.minutes}-minute sessions hold at your pace (about ${Math.round(pace() / 6) / 10} min a set, with 90 s rests on isolation lifts).${sz.minutesForMax > plan.profile.minutes ? ` Sessions of about ${sz.minutesForMax} minutes would allow ${sz.max}.` : ''}`}</p>`
     : `<p class="muted small">Big muscles aim for ${sz.goal} sets a week, the most for ${lvlName}.</p>`;
   const partial = week.notes.some(n => /mid-week/.test(n));
@@ -2402,7 +2404,7 @@ function runBuild() {
     weeklyTarget: state.settings.weeklyTarget, ignored: state.settings.ignoredRegions, snoozed: state.settings.neglectSnooze,
     seed: b.seed, usage: gp.usage, exclude: blocked(),
     level: state.plan?.profile?.level || null,
-    muscleTargets: state.plan ? weeklyTargets(state.plan.profile, state.plan.volume, pace()) : null,
+    muscleTargets: state.plan ? weeklyTargets(state.plan.profile, state.plan.volume, pace(), state.plan.splitId) : null,
     soon: soonMuscles(),
   });
   // Picked muscles this equipment can't train (fewer than 2 lifts fit).

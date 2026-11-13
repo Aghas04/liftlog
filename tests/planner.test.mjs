@@ -230,11 +230,13 @@ function blockHistory(exId, e1rms, opts = {}) {
   }));
 }
 
+// (Full body: 3-day push/pull/legs trains chest once a week, so its goal is
+// the 10 one session holds, which is also the bottom of the range.)
 test('review: progressing holds, stalled adds sets, declining cuts, within bounds', () => {
   const profile = { ...base, days: [0, 2, 4] };
-  const plan = makePlan(profile, 'ppl', { blockStart: new Date(MONDAY - 40 * DAY).toISOString() });
+  const plan = makePlan(profile, 'full_body', { blockStart: new Date(MONDAY - 40 * DAY).toISOString() });
   const run = ws => reviewBlock({ profile, plan, workouts: ws, lookup, exercises: EXERCISES });
-  const target = weeklyTargets(profile).chest;
+  const target = weeklyTargets(profile, {}, 130, plan.splitId).chest;
   assert.equal(run(blockHistory('bench_press', [100, 103, 106, 109, 112])).volume.chest.to, target);
   assert.equal(run(blockHistory('bench_press', [100, 100, 100, 100, 100])).volume.chest.to, target + 2);
   assert.equal(run(blockHistory('bench_press', [110, 108, 106, 104, 102])).volume.chest.to, target - 2);
@@ -375,8 +377,10 @@ test('more time means more weekly volume, never past the level maximum', () => {
       }
     }
   }
-  // Short sessions keep the level's base volume (unchanged from before).
-  assert.equal(weeklyTargets({ ...base, level: 'intermediate', days: [0, 1, 3, 4], minutes: 60 }).chest, 14);
+  // Less time scales goals down to what the sessions hold (3 x 45 min is far
+  // under 6 x 120 min), more time scales them up.
+  assert.ok(weeklyTargets({ ...base, level: 'intermediate', days: [0, 1, 3, 4], minutes: 60 }).chest < 14);
+  assert.ok(weeklyTargets({ ...base, level: 'intermediate', days: [0, 2, 4], minutes: 45 }).chest < weeklyTargets({ ...base, level: 'intermediate', days: [0, 1, 2, 3, 4, 5], minutes: 120 }).chest - 8);
   // A lot of time reaches the maximum.
   assert.equal(weeklyTargets({ ...base, level: 'intermediate', days: [0, 1, 2, 3, 4, 5], minutes: 120 }).chest, 20);
   // Block-review overrides still win.
@@ -411,7 +415,7 @@ test('review on a cut: holding strength keeps volume instead of adding sets', ()
   const profile = { ...base, days: [0, 2, 4] };
   const plan = makePlan(profile, 'ppl', { blockStart: new Date(MONDAY - 40 * DAY).toISOString() });
   const flat = blockHistory('bench_press', [100, 100, 100, 100, 100]);
-  const target = weeklyTargets(profile).chest;
+  const target = weeklyTargets(profile, {}, 130, plan.splitId).chest;
   const cut = reviewBlock({ profile, plan, workouts: flat, lookup, exercises: EXERCISES, phase: 'cut' }).volume.chest;
   assert.equal(cut.to, target);
   assert.match(cut.reason, /cut/);
@@ -428,5 +432,9 @@ test('supersets off: the plan never pairs lifts and says what it costs', async (
   const off = currentWeek(plan, [], lookup, MONDAY, 160, { ...ctx, supersets: false });
   assert.equal(pairs(off), 0);
   assert.ok(off.days.filter(d => d.kind === 'train').every(d => d.session.estMinutes <= 61), 'still fits the time');
-  assert.ok(off.notes.some(n => /Supersets \(Settings\)/.test(n)));
+  // Goals are sized to fit the time, so the week still lands on them; if it
+  // can't, the note says supersets would fit more.
+  const v = (await import('../js/plancontrol.js')).weekVolume(off, [], lookup);
+  const short = MAJOR.some(m => v[m].planned < v[m].goal - 1);
+  assert.ok(!short || off.notes.some(n => /Supersets \(Settings\)/.test(n)));
 });

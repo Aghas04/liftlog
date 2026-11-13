@@ -39,9 +39,9 @@ test('strength levels use your clean-form best after a reset', () => {
 
 test('the block review doesn\'t read a form reset as decline', () => {
   const profile = { days: [0, 2, 4], minutes: 75, level: 'intermediate', goal: 'muscle', priority: [], equipment: 'gym', activities: [], avoid: [] };
-  const plan = { profile, splitId: 'ppl', blockStart: at(35), volume: {}, slots: {} };
+  const plan = { profile, splitId: 'full_body', blockStart: at(35), volume: {}, slots: {} };
   const ws = history('bench_press').map(w => ({ ...w, dayType: 'plan_push' }));
-  const target = weeklyTargets(profile).chest;
+  const target = weeklyTargets(profile, {}, 130, plan.splitId).chest;
   const run = resets => reviewBlock({ profile, plan, workouts: ws, lookup, exercises: EXERCISES, resets }).volume.chest;
   assert.ok(run({}).to < target, 'without the reset the drop looks like decline');
   assert.equal(run({ bench_press: at(9) }).to, target, 'clean sessions are progressing: volume holds');

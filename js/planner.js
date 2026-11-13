@@ -64,7 +64,8 @@ export const ISO_REST = 90;
 const WORK = 40;
 // Seconds a set takes on average when sessions are planned to fit: big lifts
 // at your usual pace, isolation lifts (about 60% of sets) with 90 s rests.
-const sizingSec = secPerSet => 0.4 * secPerSet + 0.6 * Math.min(secPerSet, WORK + ISO_REST);
+// (Isolation sets take longer at a slower pace too.)
+const sizingSec = secPerSet => 0.4 * secPerSet + 0.6 * Math.min(secPerSet, (WORK + ISO_REST) * paceFactor(secPerSet));
 // Small muscles already get a lot of indirect work, so they need fewer direct sets.
 // Abs get little extra from more volume and plenty of bracing in big lifts: kept lower.
 const SIZE_FACTOR = { forearms: 0.5, adductors: 0.5, calves: 0.8, abs: 0.6 };
@@ -126,17 +127,28 @@ function rng(seed) {
   };
 }
 
-// Share of the time limit filled with planned sets; the rest absorbs warm-ups
-// and the occasional longer rest.
-export const TIME_FILL = 0.93;
+// Share of the time limit filled with planned sets.
+export const TIME_FILL = 1;
+// Fixed time in every session besides the sets: ramp-up sets before the first
+// big lifts, and moving between exercises (about one change per 3 sets). It
+// stretches with your pace like everything else. Calibrated so planned weeks
+// land on their goals across 2-6 days, 30-120 minutes and every split.
+const SESSION_FIXED = 420, CHANGE_PER_SET = 15;
+const paceFactor = secPerSet => Math.min(1.5, Math.max(0.75, secPerSet / 160));
+// Sets one session of `minutes` holds, and the minutes `sets` need.
+const setsPerSession = (minutes, secPerSet) => Math.max(0, (minutes * 60 * TIME_FILL - SESSION_FIXED * paceFactor(secPerSet)) / (sizingSec(secPerSet) + CHANGE_PER_SET * paceFactor(secPerSet)));
+const minutesFor = (sets, secPerSet) => (sets * (sizingSec(secPerSet) + CHANGE_PER_SET * paceFactor(secPerSet)) + SESSION_FIXED * paceFactor(secPerSet)) / (60 * TIME_FILL);
 
 /**
  * Weekly direct-set target per muscle. overrides come from block reviews.
- * When the weekly time (days x minutes) fits more than the level's base
- * volume, every muscle scales up together, never past the level's maximum
- * (more sets keep helping, with diminishing returns: Pelland 2024).
+ * Goals follow the time you train (days x minutes): more time scales every
+ * muscle up together, never past the level's maximum (more sets keep helping,
+ * with diminishing returns: Pelland 2024); less time than the level's usual
+ * volume needs scales them down to what your sessions hold, so goals are ones
+ * you can reach (fewer sets still grow muscle, just less per week:
+ * Schoenfeld 2017; Pelland 2024).
  */
-export function weeklyTargets(profile, overrides = {}, secPerSet = 130) {
+export function weeklyTargets(profile, overrides = {}, secPerSet = 130, splitId = null) {
   const lvl = LEVELS[profile.level] || LEVELS.intermediate;
   const base = {};
   for (const m of Object.keys(MUSCLES)) {
@@ -145,15 +157,34 @@ export function weeklyTargets(profile, overrides = {}, secPerSet = 130) {
     base[m] = Math.min(t, volumeBounds(profile, m)[1]);
   }
   const days = (profile.days || []).length;
-  const capacity = days * Math.floor(((profile.minutes || 60) * 60) / sizingSec(secPerSet)) * TIME_FILL;
+  const capacity = days * setsPerSession(profile.minutes || 60, secPerSet);
   // Sets the sessions actually have to hold: arms and forearms get about half
   // of their goal from rows, presses and curls, so they need fewer direct sets.
   const total = Object.entries(base).reduce((a, [m, t]) => a + t * (INDIRECT_SHARE[m] ? 1 - INDIRECT_SHARE[m] : 1), 0);
-  const boost = days && capacity > total ? capacity / total : 1;
+  const boost = days ? capacity / total : 1;
+  // With a split, each muscle's goal comes from the days that train it: a
+  // crowded day (legs: quads, hamstrings, glutes, calves) holds less per
+  // muscle than a lighter one, and a session takes at most 10 sets of one muscle.
+  const split = splitId && days ? splitById(splitId) : null;
+  const scaleOf = {}, sessionsOf = {};
+  if (split) {
+    const types = sequenceTypes(split, 0, days);
+    for (const t of types) for (const m of PLAN_DAYS[t].muscles) sessionsOf[m] = (sessionsOf[m] || 0) + 1;
+    const need = m => base[m] * (INDIRECT_SHARE[m] ? 1 - INDIRECT_SHARE[m] : 1);
+    const per = setsPerSession(profile.minutes || 60, secPerSet);
+    for (const t of types) {
+      const load = PLAN_DAYS[t].muscles.reduce((a, m) => a + need(m) / sessionsOf[m], 0);
+      const sc = load ? per / load : boost;
+      for (const m of PLAN_DAYS[t].muscles) scaleOf[m] = Math.min(scaleOf[m] ?? Infinity, sc);
+    }
+  }
   const out = {};
   for (const m of Object.keys(MUSCLES)) {
-    // Extra session time goes to the muscles that grow from it, not to abs.
-    out[m] = overrides[m] != null ? overrides[m] : Math.round(Math.min(base[m] * (m === 'abs' ? 1 : boost), volumeBounds(profile, m)[1]));
+    const b = scaleOf[m] ?? boost;
+    const cap = sessionsOf[m] ? sessionsOf[m] * PER_SESSION_CAP : Infinity;
+    // Extra session time goes to the muscles that grow from it, not to abs;
+    // short on time, every muscle comes down with it (at least 2 sets).
+    out[m] = overrides[m] != null ? overrides[m] : Math.max(2, Math.round(Math.min(base[m] * (m === 'abs' ? Math.min(1, b) : b), volumeBounds(profile, m)[1], cap)));
   }
   return out;
 }
@@ -165,7 +196,7 @@ export function weeklyTargets(profile, overrides = {}, secPerSet = 130) {
  */
 export function goalSizing(profile, secPerSet = 130, splitId = null) {
   const lvl = LEVELS[profile.level] || LEVELS.intermediate;
-  let goal = weeklyTargets(profile, {}, secPerSet).chest;
+  let goal = weeklyTargets(profile, {}, secPerSet, splitId).chest;
   // The split may hold less: each session takes at most 10 sets of a muscle.
   const split = splitId && splitById(splitId);
   const freq = split ? sequenceTypes(split, 0, (profile.days || []).length || 1).filter(t => PLAN_DAYS[t].muscles.includes('chest')).length : 0;
@@ -178,8 +209,12 @@ export function goalSizing(profile, secPerSet = 130, splitId = null) {
     const t = Math.min(lvl.max * (SIZE_FACTOR[m] || 1), volumeBounds(profile, m)[1]) * (m === 'abs' ? lvl.base / lvl.max : 1);
     return a + t * (INDIRECT_SHARE[m] ? 1 - INDIRECT_SHARE[m] : 1);
   }, 0);
-  const minutesForMax = Math.ceil(((need / (days * TIME_FILL)) * sizingSec(secPerSet)) / 60 / 5) * 5;
-  return { goal, max, minutesForMax, splitCap: Number.isFinite(splitCap) ? splitCap : null, freq };
+  const minutesForMax = Math.ceil(minutesFor(need / days, secPerSet) / 5) * 5;
+  // The bottom of the level's research range, and the minutes it needs.
+  const min = volumeBounds(profile, 'chest')[0];
+  const needMin = Object.keys(MUSCLES).reduce((a, m) => a + volumeBounds(profile, m)[0] * (INDIRECT_SHARE[m] ? 1 - INDIRECT_SHARE[m] : 1), 0);
+  const minutesForMin = Math.ceil(minutesFor(needMin / days, secPerSet) / 5) * 5;
+  return { goal, max, min, minutesForMax, minutesForMin, splitCap: Number.isFinite(splitCap) ? splitCap : null, freq };
 }
 
 export const volumeBounds = (profile, m) => {
@@ -542,8 +577,17 @@ export function buildSession({ type, variant, setsByMuscle, lookup, profile, sec
     const cand = trimOrder().find(it => it.sets > 2);
     if (cand) { cand.sets--; trimmed++; continue; }
     const acc = trimOrder().find(it => !it.core);
-    if (!acc) break;
-    drop(acc);
+    if (acc) { drop(acc); continue; }
+    // 5. Very short sessions: a small muscle's direct work, those the big lifts
+    // already train most first (arms from presses and rows), then the rest of
+    // the small muscles. Other days of the week pick them up where there's room.
+    const smallCore = trimOrder().filter(it => !MAJOR.includes(it.muscle) && items.length > 1)
+      .sort((x, y) => (INDIRECT_SHARE[y.muscle] || 0) - (INDIRECT_SHARE[x.muscle] || 0))[0];
+    if (smallCore) { drop(smallCore); continue; }
+    // 6. Then glutes and shoulders, which squats, deadlifts and presses train too.
+    const helped = trimOrder().find(it => (INDIRECT_SHARE[it.muscle] || 0) > 0 && items.length > 1);
+    if (helped) { drop(helped); continue; }
+    break;
   }
   if (trimmed) notes.push(`Time limit: ${trimmed} set${trimmed > 1 ? 's' : ''} trimmed`);
   // A dropped accessory can leave its superset partner alone.
@@ -669,7 +713,7 @@ export function planWeek(input) {
   // the remaining sessions (never above the per-session cap).
   // Without a measured pace, sets take longer (2-3 min rests on big lifts, warm-ups).
   // (No measured pace yet: sets take longer than a default guess, so size for that.)
-  let targets = weeklyTargets(profile, plan.volume, perLift && !timeScale ? Math.round(secPerSet * 1.2) : secPerSet);
+  let targets = weeklyTargets(profile, plan.volume, perLift && !timeScale ? Math.round(secPerSet * 1.2) : secPerSet, plan.splitId);
   const easing = plan.easeWeek && String(plan.easeWeek) === wk;
   const ease = (easing ? 0.7 : 1) * (deload ? DELOAD_SETS : 1);
   // A goal can't be more than this split's sessions can hold (10 sets per
@@ -939,7 +983,7 @@ export function reviewBlock(input) {
   // a lift's progress counts only sessions from its reset on.
   const clean = (id, date) => !resets[id] || date >= resets[id];
   const block = workouts.filter(w => w.date >= start);
-  const targets = weeklyTargets(profile, plan.volume, secPerSet);
+  const targets = weeklyTargets(profile, plan.volume, secPerSet, plan.splitId);
   const volume = {};
   const progressOf = {};
   for (const m of Object.keys(MUSCLES)) {
