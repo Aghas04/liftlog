@@ -935,3 +935,5 @@ a.btn { display: flex; align-items: center; justify-content: center; text-decora
 .version { text-align: center; margin-top: 14px; }
 /* Form reset: sessions before it are faded on the chart. */
 .chart .pt.old { opacity: .35; }
+/* Picked weight outside the rep range. */
+.suggest .warn { color: var(--warn); }

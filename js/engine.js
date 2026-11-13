@@ -626,6 +626,76 @@ export function targetFor(sug, ex, weight, setIndex, bw) {
 }
 
 /**
+ * You changed a set's weight during a workout. A warm-up keeps its reps (it
+ * stays light). A working set gets a goal for its new weight from today's
+ * estimate, counting working sets only. Changing the first set still to do
+ * also moves the later sets you haven't changed yourself to that weight
+ * (straight sets), each with its own goal; a later set you change is yours
+ * from then on. Planned pyramids keep their pattern. Returns the changed sets.
+ */
+export function applyWeightChange(entry, ex, set, bw) {
+  if (set.warmup) {
+    if (set.target) set.target = { weight: set.weight, reps: set.target.reps };
+    return [set];
+  }
+  if (set.done) return [set];
+  const sug = entry.suggestion;
+  const work = entry.sets.filter(s => !s.warmup);
+  const k = work.indexOf(set);
+  const goal = (s, i) => {
+    if (s.weight == null) return;
+    const reps = sug ? targetFor(sug, ex, s.weight, i, bw) : null;
+    if (reps) s.target = { weight: s.weight, reps };
+  };
+  goal(set, k);
+  const changed = [set];
+  const first = work.find(s => !s.done) === set;
+  if (!first) { set.byHand = true; return changed; }
+  if (set.weight == null || sug?.weights) return changed;
+  work.forEach((s, i) => {
+    if (i <= k || s.done || s.byHand) return;
+    s.weight = set.weight;
+    goal(s, i);
+    changed.push(s);
+  });
+  return changed;
+}
+
+/**
+ * How a weight you picked fits this lift's rep range, from today's estimate:
+ * { pred, goal, fit: 'ok' | 'heavy' | 'light', better }. pred is the reps the
+ * estimate predicts (about your max), goal what the set asks for. Heavy: the
+ * goal falls under the range (sets under ~6 reps need more sets and joint
+ * stress for the same growth: Schoenfeld 2014, 2017). Light: you could do 3+
+ * more than the top of the range, so stopping there leaves many in reserve
+ * (growth drops further from failure: Robinson 2024). better: a weight on your
+ * step grid that fits. null without an estimate.
+ */
+export function weightFit(sug, ex, weight, setIndex, bw, inc) {
+  if (!sug?.est || ex.timed) return null;
+  const load = loadFor(ex, weight, bw);
+  if (!(load > 0)) return null;
+  const [zMin, zMax] = sug.zone || zoneFor(ex);
+  const off = (sug.drop || 0) * Math.max(0, setIndex);
+  const bonus = sug.bonus || 0;
+  const pred = repsAt(sug.est, load) - off;
+  const raw = pred + bonus;
+  const goal = Math.min(zMax, Math.max(1, Math.round(raw)));
+  // Weight whose goal is r reps for this set.
+  const weightFor = r => sug.est / (1 + (r - bonus + off) / 30) - (usesBodyweight(ex) ? bw || 0 : 0);
+  const step = inc > 0 ? inc : 5;
+  if (raw < zMin - 0.5) {
+    const better = Math.floor(weightFor(zMin) / step + 1e-9) * step;
+    return { pred: Math.max(0, Math.round(pred)), goal, fit: 'heavy', better: better < weight && (better > 0 || usesBodyweight(ex)) ? better : null };
+  }
+  if (raw >= zMax + 3) {
+    const better = Math.ceil(weightFor(zMax) / step - 1e-9) * step;
+    return { pred: Math.round(pred), goal, fit: 'light', better: better > weight ? better : null };
+  }
+  return { pred: Math.max(0, Math.round(pred)), goal, fit: 'ok', better: null };
+}
+
+/**
  * A working set that landed 2+ reps off its goal: today's estimate from that
  * set, so the remaining sets follow what you can do today. Use with targetFor,
  * counting set indexes from the next set (0). Returns null when on target.

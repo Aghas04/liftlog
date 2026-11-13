@@ -14,7 +14,7 @@ import {
 import { learnRests } from './rest.js';
 import { APP_VERSION } from './version.js';
 import {
-  suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad,
+  suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad, applyWeightChange, weightFit,
   personalFatigueRate, fatigueFactor, DEFAULT_FATIGUE_RATE, calibrationFrom, loadFor, deloadSuggestion, deloadSetCount, retargetFrom, workWeightOf,
 } from './engine.js';
 import { PLAN_DAYS, recommendSplits, readinessAdjust, swapSuggestions, splitById, slotLetter, weeklyTargets, goalSizing, modelSeconds } from './planner.js';
@@ -766,9 +766,10 @@ function exCard(w, ctx, ei, live) {
       sugHtml = `<div class="suggest"><div class="target">⏱ ${sug.reps.map(r => `${r}s`).join(' · ')}${sug.weight ? ` · ${weightLabel(ex, sug.weight)}` : ''}</div><div class="why">${esc(sug.reason)}</div></div>`;
     } else if (sug) {
       // The workout-order adjustment stays out of sight mid-workout; it's one tap away.
-      const target = sug.weights ? sug.weights.map((w, i) => `${weightLabel(ex, w)} × ${sug.reps[i]}`).join(' · ') : `${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}`;
+      const pk = pickedInfo(e, ex);
+      const target = pk ? pk.target : planText(ex, sug);
       const based = sug.basedOn ? `<div class="why">Goals based on ${relDays(sug.basedOn.date)}: ${esc(setsSummary(ex, sug.basedOn.sets))}${sug.basedOn.why === 'best' ? ' (your best recent session)' : ' (when this lift came at a similar point in the workout)'}.</div>` : '';
-      sugHtml = `<div class="suggest"><div class="target">🎯 ${target}</div><div class="why">${esc(sug.reason)}</div>${based}${restNoteHtml(e)}
+      sugHtml = `<div class="suggest"><div class="target">🎯 ${target}</div><div class="picked">${pk ? pk.html : ''}</div><div class="why reason"${pk ? ' hidden' : ''}>${esc(sug.reason)}</div>${based}${restNoteHtml(e)}
         ${sug.fatigueNote ? `<details class="why-more"><summary>Why this number?</summary><p>${esc(sug.fatigueNote)}</p></details>` : ''}
         ${sug.bigJump ? '<button class="link-btn" data-act="exMenu">Set a smaller weight step for this lift</button>' : ''}
         ${(isBW(ex) || isAssist(ex)) && !bodyweightOn() ? '<button class="link-btn" data-act="tab" data-tab="health">Log your bodyweight for smarter targets</button>' : ''}</div>
@@ -1767,6 +1768,50 @@ function staleHtml(w) {
   if (Date.now() - last < 3 * 3600000 || !w.exercises.some(e => e.sets.some(s => s.done))) return '';
   return `<div class="banner info"><div>Still training? Nothing logged since ${new Date(last).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.</div>
     <div class="banner-btns"><button data-act="finishStale">Finish as of then</button></div></div>`;
+}
+
+// The plan's sets as text: "185 lb × 11 · 10 · 9" (pyramids set by set).
+const planText = (ex, sug) => (sug.weights ? sug.weights.map((w, i) => `${weightLabel(ex, w)} × ${sug.reps[i]}`).join(' · ') : `${weightLabel(ex, sug.weight)} × ${sug.reps.join(' · ')}`);
+
+// You picked a different weight than the plan: the 🎯 line shows the sets as
+// they now stand, what the plan was, what today's estimate predicts at your
+// weight, and whether it still fits the rep range (weightFit has the evidence).
+function pickedInfo(e, ex) {
+  const sug = e.suggestion;
+  if (!sug || isTimed(ex) || sug.kind === 'calibrate') return null;
+  const work = e.sets.filter(s => !s.warmup);
+  const planned = k => sug.weights?.[k] ?? sug.weight;
+  if (!work.some((s, k) => s.weight != null && Math.abs(s.weight - planned(k)) > 1e-9)) return null;
+  const goals = work.map(s => ({ w: s.weight ?? s.target?.weight, r: s.done ? s.reps : s.target?.reps }));
+  const same = goals.every(g => g.w === goals[0].w);
+  const target = same ? `${weightLabel(ex, goals[0].w)} × ${goals.map(g => g.r ?? '–').join(' · ')}` : goals.map(g => `${weightLabel(ex, g.w)} × ${g.r ?? '–'}`).join(' · ');
+  const k = Math.max(0, work.findIndex(s => !s.done));
+  const s = work[k];
+  const fit = s && s.weight != null ? weightFit(sug, ex, s.weight, k, bodyweightOn(), increment(ex)) : null;
+  // The plan's reason goes with the plan (it described that weight, not yours).
+  let why = `Plan was ${planText(ex, sug)}${sug.reason ? ` (${sug.reason.replace(/.$/, '').replace(/^./, c => c.toLowerCase())})` : ''}.`;
+  if (fit) why += ` At ${weightLabel(ex, s.weight)} today's estimate says about ${fit.pred} reps${k ? ` on set ${k + 1}` : ''}; goal ${fit.goal}${fit.goal === fit.pred + 1 ? ' (one more keeps you progressing)' : ''}.`;
+  const [lo, hi] = sug.zone || zoneFor(ex);
+  const growth = lo >= 6;
+  const better = fit?.better != null ? ` About ${weightLabel(ex, fit.better)} keeps you in range.` : '';
+  const range = fit?.fit === 'heavy'
+    ? `<div class="why warn">Heavy for ${lo}–${hi} reps: about ${fit.pred} here.${growth ? ` Sets of ${lo}–${hi} build more muscle per set; heavier, lower-rep sets need more sets and joint stress for the same growth.` : ''}${better}</div>`
+    : fit?.fit === 'light'
+      ? `<div class="why warn">Light: you could do about ${fit.pred} reps here, so stopping at ${hi} leaves several in reserve, and growth drops the further from failure you stop.${fit.better != null ? ` About ${weightLabel(ex, fit.better)} gets you near failure by ${hi}.` : ''}</div>`
+      : '';
+  return { target, html: `<div class="why">${esc(why)}</div>${range}` };
+}
+// Refresh the 🎯 line in place (inputs keep focus while you type).
+function updateSuggest(card, e, ex) {
+  const sug = e.suggestion;
+  const t = card.querySelector('.suggest .target');
+  const p = card.querySelector('.suggest .picked');
+  if (!sug || !t || !p || sug.kind === 'calibrate' || isTimed(ex)) return;
+  const pk = pickedInfo(e, ex);
+  t.textContent = `🎯 ${pk ? pk.target : planText(ex, sug)}`;
+  p.innerHTML = pk ? pk.html : '';
+  const r = card.querySelector('.suggest .reason');
+  if (r) r.hidden = !!pk;
 }
 
 // Learned rest for this lift, before its first set (your own rest setting wins).
@@ -3082,12 +3127,22 @@ function setCtx(el) {
   return { ctx, w, e, s, row, card, ex: e && exercise(e.exId) };
 }
 
-// When the weight on an unfinished set changes, re-target its reps.
+// When the weight on an unfinished set changes: its goal follows (working
+// sets only), later sets follow the first set (engine.applyWeightChange).
 function retarget(c) {
-  if (c.ctx !== 'active' || c.s.done || !c.e.suggestion) return;
-  const si = +c.row.dataset.s;
-  const reps = targetFor(c.e.suggestion, c.ex, c.s.weight, si, bodyweightOn());
-  if (reps) c.s.target = { weight: c.s.weight, reps };
+  if (c.ctx !== 'active' || c.s.done) return [];
+  return applyWeightChange(c.e, c.ex, c.s, bodyweightOn());
+}
+// After a weight change: other rows' weights and goals, and the 🎯 line.
+function syncAfterWeight(c) {
+  if (!c.card) return;
+  c.card.querySelectorAll('.set-row').forEach(row => {
+    const s = c.e.sets[+row.dataset.s];
+    const input = row.querySelector('[data-field="weight"]');
+    if (input && input !== document.activeElement) input.value = fmtW(shownW(c.ex, s.weight));
+    syncRow(row, s);
+  });
+  updateSuggest(c.card, c.e, c.ex);
 }
 
 const actions = {
@@ -3331,7 +3386,7 @@ const actions = {
     input.classList.remove('bump');
     void input.offsetWidth;
     input.classList.add('bump');
-    syncRow(c.row, c.s);
+    if (f === 'weight') syncAfterWeight(c); else syncRow(c.row, c.s);
     navigator.vibrate?.(4);
   },
   done(el) {
@@ -4092,7 +4147,7 @@ const actions = {
   addSet(el) {
     const c = setCtx(el);
     const prev = c.e.sets.at(-1);
-    const si = c.e.sets.length;
+    const si = c.e.sets.filter(x => !x.warmup).length; // working-set position (warm-ups don't count)
     const ns = { weight: prev?.weight ?? null, reps: null, target: null, done: false };
     if (c.ctx === 'active' && c.e.suggestion && ns.weight != null) {
       const reps = targetFor(c.e.suggestion, c.ex, ns.weight, si, bodyweightOn());
@@ -4182,7 +4237,7 @@ const actions = {
       const inc = increment(ex);
       if (isAssist(ex)) st.weight = -Math.max(0, Math.round((-(st.weight ?? st.target?.weight ?? 0) + d * inc) / inc) * inc);
       else st.weight = Math.max(0, Math.round(((st.weight ?? st.target?.weight ?? 0) + d * inc) / inc) * inc);
-      if (e.suggestion && !st.done) { const reps = targetFor(e.suggestion, ex, st.weight, e.sets.filter(x => !x.warmup).indexOf(st), bodyweightOn()); if (reps) st.target = { weight: st.weight, reps }; }
+      applyWeightChange(e, ex, st, bodyweightOn());
       $('#fW').value = fmtW(shownW(ex, st.weight));
       focusShowGoal(ex, st);
     } else {
@@ -4347,7 +4402,7 @@ document.addEventListener('input', ev => {
     if (v != null && Number.isNaN(v)) return;
     if (el.id === 'fW') {
       st.weight = v == null ? null : fromDisplay(v, U()) * (isAssist(ex) ? -1 : 1);
-      if (e.suggestion && st.weight != null) { const reps = targetFor(e.suggestion, ex, st.weight, e.sets.filter(x => !x.warmup).indexOf(st), bodyweightOn()); if (reps) st.target = { weight: st.weight, reps }; }
+      if (st.weight != null) applyWeightChange(e, ex, st, bodyweightOn());
       focusShowGoal(ex, st);
     } else st.reps = v == null ? null : Math.round(v);
     saveSoon();
@@ -4368,7 +4423,7 @@ document.addEventListener('input', ev => {
     c.s[f] = v;
     if (f === 'weight') retarget(c);
     saveSoon();
-    syncRow(c.row, c.s);
+    if (f === 'weight' && c.ctx === 'active') syncAfterWeight(c); else syncRow(c.row, c.s);
   }
 });
 
