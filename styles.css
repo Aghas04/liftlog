@@ -952,3 +952,10 @@ a.btn { display: flex; align-items: center; justify-content: center; text-decora
 .exm-head + .menu-list { margin-top: 0; }
 .menu-list button i { margin-left: auto; font-style: normal; color: var(--muted); font-size: 20px; line-height: 1; }
 .howto-block:first-of-type, .works + .howto-block { margin-top: 12px; }
+/* Hold a card to lift it, drag to reorder (drag.js). */
+.ex-card { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.ex-card input, .ex-card textarea { -webkit-user-select: text; user-select: text; }
+.ex-card.dragging { z-index: 20; translate: 0 var(--dy, 0); scale: 1.03; box-shadow: 0 26px 50px -14px rgba(0, 0, 0, .65), 0 0 0 1.5px var(--c, var(--accent)); transition: scale .18s ease, box-shadow .18s ease; cursor: grabbing; }
+.ex-card.drag-settle { scale: 1; transition: translate .18s ease, scale .18s ease, box-shadow .18s ease; }
+.ex-card.drag-shift { translate: 0 var(--sy, 0); transition: translate .22s cubic-bezier(.2, .8, .2, 1); }
+.drag-on, .drag-on * { -webkit-user-select: none; user-select: none; }

@@ -12,6 +12,7 @@ import {
   dayType, visibleSplits, saveSoon, flushSave, loadProblem, onOutsideChange, setLearnedRests, learnedRest,
 } from './store.js';
 import { learnRests } from './rest.js';
+import { cardDrag, isDragging } from './drag.js';
 import { APP_VERSION } from './version.js';
 import {
   suggest, targetFor, workingSets, sessionE1RM, epley, warmupSets, swapWeight, zoneFor, fatigueLoad, applyWeightChange, weightFit, fitSets,
@@ -1498,6 +1499,8 @@ function renderTabs() {
 
 // animate: play the entrance animation (tab switches, starting/finishing).
 function render(animate = false) {
+  // Mid-drag the cards must stay put: render once the card is dropped.
+  if (isDragging()) { setTimeout(() => render(animate), 250); return; }
   const views = { workout: viewWorkout, plan: viewPlan, history: viewHistory, progress: viewProgress, health: viewHealth };
   const view = $('#view');
   rateCache = null; // history edits can change what's been learned
@@ -4407,6 +4410,30 @@ function applyRest(secs) {
   closeSheet();
   render();
 }
+
+// Hold a lift's card, then drag it to reorder the workout (supersets move together).
+const WORKOUT_CARDS = '.active > .ex-card[data-w="active"]';
+cardDrag({
+  selector: WORKOUT_CARDS,
+  // Set rows have their own press-and-hold (+/- repeat); typing never drags.
+  ignore: 'input, textarea, select, .set-row',
+  blockOf: card => {
+    const w = state.activeWorkout;
+    const e = w?.exercises[+card.dataset.e];
+    if (!e?.group) return [card];
+    return [...document.querySelectorAll(WORKOUT_CARDS)].filter(c => w.exercises[+c.dataset.e]?.group === e.group);
+  },
+  onDrop: order => {
+    const w = state.activeWorkout;
+    if (!w || order.length !== w.exercises.length || new Set(order).size !== order.length) { render(); return; }
+    w.exercises = order.map(i => w.exercises[i]);
+    // A lift's place in the workout changes how tired it is: goals for lifts
+    // not started yet follow (refreshPlan keeps weights you've changed).
+    refreshPlan();
+    save();
+    render();
+  },
+});
 
 document.addEventListener('click', ev => {
   const el = ev.target.closest('[data-act]');
