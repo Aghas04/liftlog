@@ -937,3 +937,18 @@ a.btn { display: flex; align-items: center; justify-content: center; text-decora
 .chart .pt.old { opacity: .35; }
 /* Picked weight outside the rep range. */
 .suggest .warn { color: var(--warn); }
+/* Lift menu (•••): quick tiles first, problems, then settings one tap deeper. */
+.exm-title { margin-bottom: 2px; }
+.exm-sub { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+.exm-note { display: flex; align-items: center; gap: 10px; background: var(--surface-2); border-radius: 12px; padding: 4px 12px; }
+.exm-note input { flex: 1; min-width: 0; background: transparent; border: 0; padding: 10px 0; font-size: 15px; color: var(--text); }
+.exm-note input:focus { outline: none; }
+.exm-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.exm-tiles button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 68px; padding: 10px 4px; border-radius: 14px; background: var(--surface-2); font-size: 13px; font-weight: 700; text-align: center; }
+.exm-tiles button span { font-size: 20px; line-height: 1; }
+.exm-tiles button:disabled { opacity: .35; }
+.exm-tiles button:active:not(:disabled) { transform: scale(.97); }
+.exm-head { margin: 18px 4px 6px; font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.exm-head + .menu-list { margin-top: 0; }
+.menu-list button i { margin-left: auto; font-style: normal; color: var(--muted); font-size: 20px; line-height: 1; }
+.howto-block:first-of-type, .works + .howto-block { margin-top: 12px; }

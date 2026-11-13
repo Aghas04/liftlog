@@ -2130,6 +2130,20 @@ function holdTick() {
 }
 
 // Which parts of which muscles an exercise works, strongest first.
+// "Chest · also front delts, triceps": the lift's muscle and the parts of
+// other muscles it clearly helps (the full chart is on the How to page).
+function musclesLine(ex) {
+  const also = [];
+  for (const [r, w] of Object.entries(exerciseRegions(ex)).sort((a, b) => b[1] - a[1])) {
+    const reg = REGIONS[r];
+    if (!reg || reg.muscle === ex.muscle || w < 0.4) continue;
+    // Plain muscle names; for shoulders the head matters (front, side, rear delts).
+    const name = (reg.muscle === 'shoulders' ? reg.name : MUSCLES[reg.muscle] || reg.name).toLowerCase();
+    if (!also.includes(name)) also.push(name);
+  }
+  return `${MUSCLES[ex.muscle] || ''}${also.length ? ` · also ${also.slice(0, 3).join(', ')}` : ''}`;
+}
+
 function worksHtml(ex) {
   const regs = Object.entries(exerciseRegions(ex)).filter(([r]) => REGIONS[r]).sort((a, b) => b[1] - a[1]);
   const label = w => (w >= DIRECT ? 'Main' : w >= 0.4 ? 'Helps' : 'A little');
@@ -2311,7 +2325,12 @@ function reopenSheet(back) {
     openSheet({ type: 'splitEdit', id: back.id, draft: { name: sp.name, icon: sp.icon, color: sp.color, muscles: [...sp.muscles] } });
   } else openSheet(back);
 }
-function closeSheet() { ui.sheet = null; renderSheet(); }
+function closeSheet() {
+  ui.sheet = null;
+  renderSheet();
+  // A note typed in the lift menu shows on its card.
+  if (ui.noteEdited) { ui.noteEdited = false; render(); }
+}
 
 // Filter chips above the picker list. Angle chips only appear where they apply.
 function pickFiltersHtml() {
@@ -2660,35 +2679,48 @@ function sheetHtml() {
     case 'exmenu': {
       const e = state.activeWorkout.exercises[s.ei];
       const ex = exercise(e.exId);
+      const last = state.activeWorkout.exercises.length - 1;
+      const tile = (act, icon, label, extra = '') => `<button data-act="${act}" ${extra}><span>${icon}</span>${label}</button>`;
+      return `<h2 class="exm-title">${esc(ex.name)}</h2>
+        <p class="exm-sub">${esc(musclesLine(ex))}</p>
+        <label class="exm-note"><span>📝</span><input id="exNote" value="${esc(exSetting(e.exId, 'note') || '')}" placeholder="Add a note (seat height, grip…)" autocomplete="off"></label>
+        <div class="exm-tiles">
+          ${tile('swapSheet', '🔄', 'Swap')}
+          ${tile('supersetSheet', '🔗', e.group ? 'Superset ✓' : 'Superset')}
+          ${tile('addWarmups', '🔥', 'Warm-ups')}
+          ${tile('moveEx', '⬆️', 'Move up', `data-d="-1" ${s.ei === 0 ? 'disabled' : ''}`)}
+          ${tile('moveEx', '⬇️', 'Move down', `data-d="1" ${s.ei === last ? 'disabled' : ''}`)}
+          ${tile('howtoOpen', '📖', 'How to', `data-id="${e.exId}"`)}
+        </div>
+        <div class="exm-head">Something wrong?</div>
+        <div class="menu-list">
+          <button data-act="hurtSheet"><span>🤕</span>This hurt<i>›</i></button>
+          ${isTimed(ex) ? '' : resetOf(e.exId) ? `<button data-act="undoFormReset" data-id="${e.exId}"><span>↩️</span>Undo form reset (${relDays(resetOf(e.exId).at)})</button>` : `<button data-act="formResetSheet"><span>🎯</span>Go lighter to fix my form<i>›</i></button>`}
+          <button data-act="notAtGym"><span>🚫</span>My gym doesn't have this</button>
+        </div>
+        <div class="menu-list">
+          <button data-act="exSettings"><span>⚙️</span>Lift settings<i>›</i></button>
+          <button class="danger" data-act="removeExMenu"><span>🗑</span>Remove exercise</button>
+        </div>`;
+    }
+    case 'exsettings': {
+      const e = state.activeWorkout.exercises[s.ei];
+      const ex = exercise(e.exId);
       const inc = increment(ex);
       const steps = stepChoices(U());
-      return `<h2>${esc(ex.name)}</h2>
-        ${worksHtml(ex)}
-        ${tipsHtml(ex)}
-        <label class="field" style="margin-top:14px"><span>Note — shows every time you do this lift</span>
-          <textarea id="exNote" rows="2" placeholder="e.g. Seat height 4, wide grip">${esc(exSetting(e.exId, 'note') || '')}</textarea></label>
-        <button class="btn" data-act="saveNote">Save note</button>
-        <div class="field" style="margin-top:16px"><span>Weight step for this lift (your gym's real jumps)</span>
+      const starred = stars().includes(e.exId);
+      return `<h2>${esc(ex.name)}: settings</h2>
+        <div class="field"><span>Weight step (your gym's real jumps)</span>
           <div class="chips">${steps.map(v => `<button data-act="setStep" data-v="${v}" class="${Math.abs(inc - v) < 1e-6 ? 'on' : ''}">${fmtW(v)} ${wu()}</button>`).join('')}${steps.some(v => Math.abs(inc - v) < 1e-6) ? '' : `<button class="on">${fmtW(inc)} ${wu()}</button>`}</div>
         </div>
-        ${isBW(ex) || isAssist(ex) || isTimed(ex) ? '' : `<div class="field" style="margin-top:16px"><span>Heaviest weight this ${ex.equipment === 'dumbbell' ? 'dumbbell rack' : ex.equipment === 'barbell' ? 'lift' : 'machine'} goes to (optional)</span>
+        ${isBW(ex) || isAssist(ex) || isTimed(ex) ? '' : `<div class="field" style="margin-top:16px"><span>Heaviest weight this ${ex.equipment === 'dumbbell' ? 'dumbbell rack' : ex.equipment === 'barbell' ? 'lift' : 'machine'} goes to</span>
           <div class="row"><input id="exMax" inputmode="decimal" value="${exSetting(e.exId, 'maxWeight') ? fmtW(toDisplay(exSetting(e.exId, 'maxWeight'), U())) : ''}" placeholder="No limit (${wu()})"><button class="btn" style="flex:0 0 80px" data-act="saveMax">Save</button></div>
           <small class="muted">Once you reach it, the app adds reps instead of weight.</small></div>`}
         <div class="menu-list">
-          <button data-act="moveEx" data-d="-1" ${s.ei === 0 ? 'disabled' : ''}><span>⬆️</span>Move up</button>
-          <button data-act="moveEx" data-d="1" ${s.ei === state.activeWorkout.exercises.length - 1 ? 'disabled' : ''}><span>⬇️</span>Move down</button>
-          <button data-act="addWarmups"><span>🔥</span>Add warm-up sets</button>
-          <button data-act="swapSheet"><span>🔄</span>Swap exercise</button>
-          <button data-act="howtoOpen" data-id="${e.exId}"><span>📖</span>How to do it · fix my form</button>
-          ${isTimed(ex) ? '' : resetOf(e.exId) ? `<button data-act="undoFormReset" data-id="${e.exId}"><span>↩️</span>Undo form reset (${relDays(resetOf(e.exId).at)})</button>` : `<button data-act="formResetSheet"><span>🎯</span>Go lighter to fix my form</button>`}
-          <button data-act="hurtSheet"><span>🤕</span>This hurt</button>
-          <button data-act="notAtGym"><span>🚫</span>My gym doesn't have this</button>
-          <button data-act="star" data-id="${e.exId}"><span>${stars().includes(e.exId) ? '★' : '☆'}</span>${stars().includes(e.exId) ? 'Starred: at my gym' : 'Star: at my gym'}</button>
-          ${ex.custom ? `<button data-act="matchSheet" data-id="${ex.id}"><span>🔗</span>Match to a library exercise</button>` : historyFor(ex.id, { all: true }).length ? `<button data-act="moveSheet" data-id="${ex.id}"><span>↔️</span>Move past history to another exercise</button>` : ''}
-          <button data-act="supersetSheet"><span>🔗</span>${e.group ? 'Add another to this superset' : 'Superset with…'}</button>
-          ${e.group ? `<button data-act="unSuperset"><span>✂️</span>Remove from superset</button>` : ''}
-          <button class="danger" data-act="removeExMenu"><span>🗑</span>Remove exercise</button>
-        </div>`;
+          <button data-act="star" data-id="${e.exId}"><span>${starred ? '★' : '☆'}</span>${starred ? 'Starred: at my gym' : 'Star: at my gym'}</button>
+          ${ex.custom ? `<button data-act="matchSheet" data-id="${ex.id}"><span>🔗</span>Match to a library exercise<i>›</i></button>` : historyFor(ex.id, { all: true }).length ? `<button data-act="moveSheet" data-id="${ex.id}"><span>↔️</span>Move past history to another exercise<i>›</i></button>` : ''}
+        </div>
+        <button class="btn ghost" style="margin-top:12px" data-act="exMenuBack">Back</button>`;
     }
     case 'formreset': {
       const e = state.activeWorkout.exercises[s.ei];
@@ -2720,6 +2752,7 @@ function sheetHtml() {
       const others = w.exercises.map((x, i) => ({ x, i })).filter(({ x }) => x !== e && (!e.group || x.group !== e.group));
       return `<h2>Superset with…</h2>
         <p class="muted small">Do one set of each back to back. Rest starts after the round.</p>
+        ${e.group ? '<button class="btn" style="margin-bottom:10px" data-act="unSuperset">✂️ Remove from superset</button>' : ''}
         ${others.length ? others.map(({ x, i }) => `<button class="pick" data-act="doSuperset" data-i="${i}"><span>${esc(exercise(x.exId).name)}</span><span class="muted">${x.group ? 'in superset ' + groupLetter(w, x.group) : ''}</span></button>`).join('') : '<div class="empty">Add another exercise first.</div>'}`;
     }
     case 'share':
@@ -2861,13 +2894,13 @@ function sheetHtml() {
       const tabs = `<div class="seg howto-tabs">${[['steps', 'Steps'], ['fix', 'Fix it'], ['video', 'Video']].map(([v, l]) => `<button data-act="howtoTab" data-v="${v}" class="${tab === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
       const back = s.back ? '<button class="btn ghost" style="margin-top:12px" data-act="howtoBack">Back</button>' : '';
       if (!h) {
-        return `<h2>${esc(ex.name)}</h2><p class="muted small">No how-to for custom exercises yet. Match it to a library exercise (Settings → My gym & exercises) to get steps and fixes, or watch a demo:</p>
+        return `<h2>${esc(ex.name)}</h2>${worksHtml(ex)}<p class="muted small">No how-to for custom exercises yet. Match it to a library exercise (Settings → My gym & exercises) to get steps and fixes, or watch a demo:</p>
           <a class="btn primary" href="${videoUrl(ex)}" target="_blank" rel="noopener">▶ Watch a demo on YouTube</a>${back}`;
       }
       let body = '';
       if (tab === 'steps') {
         const tips = tipsFor(ex);
-        body = `<div class="howto-block"><div class="works-head">Setup</div><ul>${h.setup.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+        body = `${worksHtml(ex)}<div class="howto-block"><div class="works-head">Setup</div><ul>${h.setup.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
           <div class="howto-block"><div class="works-head">How to do it</div><ol>${h.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></div>
           <div class="howto-block"><div class="works-head">Breathing</div><p>${esc(h.breath)}</p>${h.breathSource ? `<p class="muted small">${esc(h.breathSource)}</p>` : ''}</div>
           ${tips.length ? `<div class="howto-block"><div class="works-head">Key cues</div><ul>${tips.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
@@ -3501,6 +3534,8 @@ const actions = {
 
   // Exercise menu
   exMenu(el) { openSheet({ type: 'exmenu', ei: +el.closest('.ex-card').dataset.e }); },
+  exSettings() { openSheet({ type: 'exsettings', ei: ui.sheet.ei }); },
+  exMenuBack() { openSheet({ type: 'exmenu', ei: ui.sheet.ei }); },
   saveNote() {
     const e = state.activeWorkout.exercises[ui.sheet.ei];
     setExSetting(e.exId, 'note', $('#exNote').value.trim() || undefined);
@@ -4426,6 +4461,12 @@ document.addEventListener('input', ev => {
     return;
   }
   if (el.id === 'swapSearch') { ui.sheet.q = el.value; $('#swapList').innerHTML = swapListHtml(); return; }
+  // The lift's note saves as you type; the card shows it once the menu closes.
+  if (el.id === 'exNote' && ui.sheet?.type === 'exmenu') {
+    const e = state.activeWorkout?.exercises[ui.sheet.ei];
+    if (e) { state.exerciseSettings[e.exId] = { ...(state.exerciseSettings[e.exId] || {}), note: el.value.trim() || undefined }; saveSoon(); ui.noteEdited = true; }
+    return;
+  }
   if (el.id === 'matchSearch') { ui.matchQ = el.value; $('#matchList').innerHTML = matchListHtml(); return; }
   if (el.id === 'cName') { $('#cMatches').innerHTML = customMatchesHtml(el.value, $('#cMuscle')?.value); return; }
   // Keep typed names in the draft so re-rendering the sheet doesn't lose them.
